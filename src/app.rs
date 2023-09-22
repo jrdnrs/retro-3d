@@ -270,7 +270,7 @@ impl WindowApplication for App {
                     // Copy renderer framebuffer to window framebuffer
                     let mut ctx = self.window.graphics_context();
                     let buffer = ctx.framebuffer_mut();
-                    let pixels = self.renderer.get_pixels();
+                    let pixels = self.renderer.framebuffer.pixels_as_u32();
                     buffer.copy_from_slice(pixels);
 
                     // Debug timings

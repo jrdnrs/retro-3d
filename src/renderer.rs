@@ -8,24 +8,24 @@ use maths::{
 use crate::{
     app::{FAR, MAP_DEPTH_RANGE, NEAR},
     camera::Camera,
-    colour::Colour,
+    colour::BGRA8,
     player::Player,
-    surface::{Basis, Sector, Wall},
+    surface::{Sector, Wall},
     textures::{Texture, Textures, MIP_FACTOR, MIP_LEVELS, MIP_SCALES},
 };
 
-struct Framebuffer {
+pub struct Framebuffer {
     width: usize,
     height: usize,
     half_width: f32,
     half_height: f32,
-    pixels: Vec<u32>,
+    pixels: Vec<BGRA8>,
 }
 
 impl Framebuffer {
     pub fn new(width: usize, height: usize) -> Self {
         let len = width * height;
-        let pixels = vec![0; len];
+        let pixels = vec![BGRA8::default(); len];
 
         Self {
             width,
@@ -33,6 +33,70 @@ impl Framebuffer {
             half_width: width as f32 * 0.5,
             half_height: height as f32 * 0.5,
             pixels,
+        }
+    }
+
+    pub fn pixels(&self) -> &[BGRA8] {
+        &self.pixels
+    }
+
+    pub fn pixels_as_u32(&self) -> &[u32] {
+        unsafe { core::mem::transmute(&self.pixels as &[BGRA8]) }
+    }
+
+    pub fn pixels_as_u8(&self) -> &[u8] {
+        unsafe {
+            core::slice::from_raw_parts(
+                self.pixels.as_ptr() as *const u8,
+                self.pixels.len() * core::mem::size_of::<BGRA8>(),
+            )
+        }
+    }
+
+    pub fn fill(&mut self, colour: BGRA8) {
+        self.pixels.fill(colour);
+    }
+
+    pub fn set_pixel(&mut self, x: usize, y: usize, colour: BGRA8) {
+        debug_assert!(x < self.width && y < self.height);
+        let index = (y * self.width) + x;
+
+        self.pixels[index] = colour;
+    }
+
+    pub fn get_pixel(&self, x: usize, y: usize) -> BGRA8 {
+        debug_assert!(x < self.width && y < self.height);
+        let index = (y * self.width) + x;
+
+        self.pixels[index]
+    }
+
+    pub fn blend_pixel(&mut self, x: usize, y: usize, colour: BGRA8, alpha: u8) {
+        debug_assert!(x < self.width && y < self.height);
+        let index = (y * self.width) + x;
+
+        let blended = self.pixels[index].blend(colour, alpha);
+        self.pixels[index] = blended;
+    }
+
+    pub fn draw_line(&mut self, mut start: Vec2f, mut end: Vec2f, colour: BGRA8) {
+        start.x = start.x.clamp(0.0, (self.width - 1) as f32);
+        start.y = start.y.clamp(0.0, (self.height - 1) as f32);
+        end.x = end.x.clamp(0.0, (self.width - 1) as f32);
+        end.y = end.y.clamp(0.0, (self.height - 1) as f32);
+
+        let delta = end - start;
+        let steps = delta.x.abs().max(delta.y.abs());
+        let increment = delta / steps;
+
+        let mut position = start;
+
+        for _ in 0..steps as usize {
+            let x = position.x.round() as usize;
+            let y = position.y.round() as usize;
+
+            self.set_pixel(x, y, colour);
+            position += increment;
         }
     }
 }
@@ -46,7 +110,7 @@ struct RenderTask {
 pub struct Renderer {
     tasks: VecDeque<RenderTask>,
 
-    framebuffer: Framebuffer,
+    pub framebuffer: Framebuffer,
     camera: Camera,
     frustum: Polygon,
 
@@ -139,13 +203,9 @@ impl Renderer {
         }
     }
 
-    pub fn get_pixels(&self) -> &[u32] {
-        &self.framebuffer.pixels
-    }
-
     pub fn update(&mut self, player: &Player, textures: &Textures, sectors: &[Sector]) {
         // reset buffers
-        // self.clear_colour(Colour::CYAN);
+        // self.framebuffer.fill(BGRA8::CYAN);
         self.portal_bounds_min.fill(0);
         self.portal_bounds_max.fill(self.framebuffer.height as u16);
         self.wall_bounds_min.fill(0);
@@ -225,48 +285,6 @@ impl Renderer {
         screen_space_y += self.framebuffer.half_height;
 
         (Vec2f::new(screen_space_x, screen_space_y), inv_z)
-    }
-
-    pub fn clear_colour(&mut self, colour: Colour) {
-        for pixel in self.framebuffer.pixels.iter_mut() {
-            *pixel = colour.rgb;
-        }
-    }
-
-    pub fn set_pixel(&mut self, x: usize, y: usize, colour: Colour) {
-        debug_assert!(x < self.framebuffer.width && y < self.framebuffer.height);
-        let index = (y * self.framebuffer.width) + x;
-
-        self.framebuffer.pixels[index] = colour.rgb;
-    }
-
-    pub fn blend_pixel(&mut self, x: usize, y: usize, colour: Colour, alpha: u8) {
-        debug_assert!(x < self.framebuffer.width && y < self.framebuffer.height);
-        let index = (y * self.framebuffer.width) + x;
-
-        let blended = Colour::new(self.framebuffer.pixels[index]).blend(colour, alpha);
-        self.framebuffer.pixels[index] = blended.rgb;
-    }
-
-    pub fn draw_line(&mut self, mut start: Vec2f, mut end: Vec2f, colour: Colour) {
-        start.x = start.x.clamp(0.0, (self.framebuffer.width - 1) as f32);
-        start.y = start.y.clamp(0.0, (self.framebuffer.height - 1) as f32);
-        end.x = end.x.clamp(0.0, (self.framebuffer.width - 1) as f32);
-        end.y = end.y.clamp(0.0, (self.framebuffer.height - 1) as f32);
-
-        let delta = end - start;
-        let steps = delta.x.abs().max(delta.y.abs());
-        let increment = delta / steps;
-
-        let mut position = start;
-
-        for _ in 0..steps as usize {
-            let x = position.x.round() as usize;
-            let y = position.y.round() as usize;
-
-            self.set_pixel(x, y, colour);
-            position += increment;
-        }
     }
 
     pub fn draw_sector(&mut self, sectors: &[Sector], textures: &Textures) {
@@ -461,7 +479,7 @@ impl Renderer {
                 let texture_y = (v * mip_scale) as usize & (texture.levels[mip_level].height - 1);
 
                 let colour = texture.sample(texture_x, texture_y, mip_level);
-                self.set_pixel(x, y, colour);
+                self.framebuffer.set_pixel(x, y, colour);
 
                 v += v_m;
             }
@@ -593,7 +611,7 @@ impl Renderer {
 
             let colour = texture.sample(texture_x, texture_y, mip_level);
 
-            self.set_pixel(x, y, colour);
+            self.framebuffer.set_pixel(x, y, colour);
 
             u += u_m;
             v += v_m;
