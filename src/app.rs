@@ -28,7 +28,7 @@ pub const DEFAULT_FOV: f32 = 75.0;
 pub const DEFAULT_FPS: f32 = 120.0;
 
 pub const NEAR: f32 = 1.0;
-pub const FAR: f32 = 1000.0;
+pub const FAR: f32 = 512.0;
 pub const MAP_DEPTH_RANGE: f32 = 1.0 / (FAR - NEAR);
 
 pub struct App {

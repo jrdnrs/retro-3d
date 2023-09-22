@@ -100,12 +100,7 @@ impl BGRA8 {
         let g = ((g1 + g2) >> 8) as u8;
         let b = ((b1 + b2) >> 8) as u8;
 
-        Self {
-            r,
-            g,
-            b,
-            a: self.a,
-        }
+        Self { r, g, b, a: self.a }
     }
 
     pub fn as_u32(self) -> u32 {

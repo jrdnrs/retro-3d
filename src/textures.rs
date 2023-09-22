@@ -7,7 +7,7 @@ use crate::colour::BGRA8;
 pub const MIP_LEVELS: usize = 4;
 /// Arbitrary factor to scale the mip level distance thresholds by. A higher value will result in
 /// more mip levels being used for a given distance
-pub const MIP_FACTOR: f32 = 8.0;
+pub const MIP_FACTOR: f32 = 4.0;
 /// As subsequent mip maps are smaller resolutions, we use this to scale texture coordinates
 pub const MIP_SCALES: [f32; MIP_LEVELS] = [1.0 / 1.0, 1.0 / 2.0, 1.0 / 4.0, 1.0 / 8.0];
 
