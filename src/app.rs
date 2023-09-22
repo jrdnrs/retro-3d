@@ -1,7 +1,10 @@
 use std::time::{Duration, Instant};
 
 use input::Input;
-use maths::{geometry::AABB, linear::Vec2f};
+use maths::{
+    geometry::AABB,
+    linear::{Mat2f, Vec2f},
+};
 use physics::collider::Collider;
 use window::{
     application::WindowApplication,
@@ -14,7 +17,7 @@ use windows_sys::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use crate::{
     player::Player,
     renderer::Renderer,
-    surface::{Basis, Plane, Sector, Wall},
+    surface::{Plane, Sector, Wall},
     textures::{self, Textures},
     timer::Timer,
 };
@@ -81,7 +84,7 @@ impl App {
 
         self.textures.load_default();
 
-        let x5_scale = Basis::new(Vec2f::ZERO, Vec2f::uniform(5.0));
+        let x5_scale = Mat2f::rotation(1.1) * Mat2f::scale(Vec2f::uniform(5.0));
 
         self.sectors = vec![
             Sector {
@@ -89,90 +92,101 @@ impl App {
                     Wall::new(
                         Vec2f::new(-50.0, -50.0),
                         Vec2f::new(-50.0, 50.0),
-                        x5_scale,
                         textures::SAND,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         None,
                     ),
                     Wall::new(
                         Vec2f::new(-50.0, 50.0),
                         Vec2f::new(50.0, 50.0),
-                        x5_scale,
                         textures::LEAF,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         None,
                     ),
                     Wall::new(
                         Vec2f::new(50.0, 50.0),
                         Vec2f::new(50.0, -50.0),
-                        x5_scale,
                         textures::STONE_BRICK,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         None,
                     ),
                     Wall::new(
                         Vec2f::new(50.0, -50.0),
                         Vec2f::new(-25.0, -75.0),
-                        x5_scale,
                         textures::STONE_BRICK,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         None,
                     ),
                     Wall::new(
                         Vec2f::new(-25.0, -75.0),
                         Vec2f::new(-50.0, -50.0),
-                        x5_scale,
                         textures::PORTAL,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         // Some(1),
                         None,
                     ),
                 ],
-                floor: Plane::new(0.0, x5_scale, textures::GRASS),
-                ceiling: Plane::new(25.0, x5_scale, textures::PLANK),
+                floor: Plane::new(0.0, textures::GRASS, Vec2f::ZERO, x5_scale),
+                ceiling: Plane::new(25.0, textures::PLANK, Vec2f::ZERO, x5_scale),
             },
             Sector {
                 walls: vec![
                     Wall::new(
                         Vec2f::new(-50.0, -50.0),
                         Vec2f::new(-25.0, -75.0),
-                        x5_scale,
                         textures::STONE_BRICK,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         Some(0),
                     ),
                     Wall::new(
                         Vec2f::new(-25.0, -75.0),
                         Vec2f::new(-25.0, -140.0),
-                        x5_scale,
                         textures::STONE_BRICK,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         None,
                     ),
                     Wall::new(
                         Vec2f::new(-25.0, -140.0),
                         Vec2f::new(-60.0, -140.0),
-                        x5_scale,
                         textures::STONE_BRICK,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         None,
                     ),
                     Wall::new(
                         Vec2f::new(-60.0, -140.0),
                         Vec2f::new(-100.0, -100.0),
-                        x5_scale,
                         textures::STONE_BRICK,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         None,
                     ),
                     Wall::new(
                         Vec2f::new(-100.0, -100.0),
                         Vec2f::new(-100.0, -50.0),
-                        x5_scale,
                         textures::STONE_BRICK,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         None,
                     ),
                     Wall::new(
                         Vec2f::new(-100.0, -50.0),
                         Vec2f::new(-50.0, -50.0),
-                        x5_scale,
                         textures::STONE_BRICK,
+                        Vec2f::ZERO,
+                        Vec2f::uniform(5.0),
                         None,
                     ),
                 ],
-                floor: Plane::new(5.0, x5_scale, textures::GRASS),
-                ceiling: Plane::new(18.0, x5_scale, textures::PLANK),
+                floor: Plane::new(5.0, textures::GRASS, Vec2f::ZERO, x5_scale),
+                ceiling: Plane::new(18.0, textures::PLANK, Vec2f::ZERO, x5_scale),
             },
         ];
     }
@@ -231,10 +245,24 @@ impl App {
             }
         }
 
+        // Test changing sector ceiling height
         if self.input.keyboard.is_key_held(KeyCode::ArrowUp) {
             self.sectors[0].ceiling.height += 10.0 * delta_seconds
         } else if self.input.keyboard.is_key_held(KeyCode::ArrowDown) {
             self.sectors[0].ceiling.height -= 10.0 * delta_seconds
+        }
+
+        // Test changing floor/ceiling texture rotation
+        if self.input.keyboard.is_key_held(KeyCode::ArrowLeft) {
+            self.sectors[0].floor.texture_scale_rotate =
+                Mat2f::rotation(0.01 * self.timer.frame_count as f32) * Mat2f::scale(Vec2f::uniform(5.0));
+            self.sectors[0].ceiling.texture_scale_rotate =
+                Mat2f::rotation(0.01 * self.timer.frame_count as f32) * Mat2f::scale(Vec2f::uniform(5.0));
+        } else if self.input.keyboard.is_key_held(KeyCode::ArrowRight) {
+            self.sectors[0].floor.texture_scale_rotate =
+                Mat2f::rotation(-0.01 * self.timer.frame_count as f32) * Mat2f::scale(Vec2f::uniform(5.0));
+            self.sectors[0].ceiling.texture_scale_rotate =
+                Mat2f::rotation(-0.01 * self.timer.frame_count as f32) * Mat2f::scale(Vec2f::uniform(5.0));
         }
 
         self.renderer

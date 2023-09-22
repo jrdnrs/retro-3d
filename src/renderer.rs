@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use maths::{
     geometry::{Polygon, Segment},
-    linear::Vec2f,
+    linear::{Mat2f, Vec2f},
 };
 
 use crate::{
@@ -300,6 +300,8 @@ impl Renderer {
         // Draw sector ceiling
         self.draw_plane(
             textures.get(sector.ceiling.texture_index).unwrap(),
+            sector.ceiling.texture_offset,
+            &sector.ceiling.texture_scale_rotate,
             unsafe { &*(&self.portal_bounds_min as *const Vec<u16>) },
             unsafe { &*(&self.wall_bounds_min as *const Vec<u16>) },
             self.camera.height_offset - sector.ceiling.height,
@@ -310,6 +312,8 @@ impl Renderer {
         // Draw sector floor
         self.draw_plane(
             textures.get(sector.floor.texture_index).unwrap(),
+            sector.floor.texture_offset,
+            &sector.floor.texture_scale_rotate,
             unsafe { &*(&self.wall_bounds_max as *const Vec<u16>) },
             unsafe { &*(&self.portal_bounds_max as *const Vec<u16>) },
             self.camera.height_offset - sector.floor.height,
@@ -335,13 +339,14 @@ impl Renderer {
             return;
         }
 
-        // TEMP:
-        // Testing texture coordinates based on world space position
-        let mut tex_coord_a = wall.texture_basis.apply(Vec2f::new(0.0, 0.0));
-        let mut tex_coord_b = wall.texture_basis.apply(Vec2f::new(
-            (wall.b - wall.a).magnitude(),
-            sector.ceiling.height - sector.floor.height,
-        ));
+        // TODO: Consider precalculating these values, but we must then make sure to update
+        // texture coordinates for all walls in a sector when the sector's ceiling/floor height changes.
+        let mut tex_coord_a = Vec2f::new(0.0, 0.0);
+        let mut tex_coord_b = Vec2f::new(wall.width, sector.ceiling.height - sector.floor.height);
+        tex_coord_a += wall.texture_offset;
+        tex_coord_b += wall.texture_offset;
+        tex_coord_a *= wall.texture_scale;
+        tex_coord_b *= wall.texture_scale;
 
         // Near plane clipping
         // Due to frustum culling, at most one vertex will be clipped
@@ -497,6 +502,8 @@ impl Renderer {
     fn draw_plane(
         &mut self,
         texture: &Texture,
+        texture_offset: Vec2f,
+        texture_scale_rotate: &Mat2f,
         min_bounds: &[u16],
         max_bounds: &[u16],
         height_offset: f32,
@@ -530,6 +537,8 @@ impl Renderer {
             while min_bound > y_min {
                 self.rasterise_plane_span(
                     texture,
+                    texture_offset,
+                    texture_scale_rotate,
                     height_offset,
                     inv_focal_width,
                     y_min as usize,
@@ -543,6 +552,8 @@ impl Renderer {
                 y_max -= 1;
                 self.rasterise_plane_span(
                     texture,
+                    texture_offset,
+                    texture_scale_rotate,
                     height_offset,
                     inv_focal_width,
                     y_max as usize,
@@ -556,6 +567,8 @@ impl Renderer {
         for y in y_min..y_max {
             self.rasterise_plane_span(
                 texture,
+                texture_offset,
+                texture_scale_rotate,
                 height_offset,
                 inv_focal_width,
                 y as usize,
@@ -568,6 +581,8 @@ impl Renderer {
     fn rasterise_plane_span(
         &mut self,
         texture: &Texture,
+        texture_offset: Vec2f,
+        texture_scale_rotate: &Mat2f,
         height_offset: f32,
         inv_focal_width: f32,
         y: usize,
@@ -594,8 +609,12 @@ impl Renderer {
         .rotate(self.camera.yaw_sin, self.camera.yaw_cos)
             + Vec2f::new(self.camera.position.x, -self.camera.position.y);
 
-        let tex_coord_a = ws_1 * mip_scale;
-        let tex_coord_b = ws_2 * mip_scale;
+        let mut tex_coord_a = ws_1 * mip_scale;
+        let mut tex_coord_b = ws_2 * mip_scale;
+        tex_coord_a += texture_offset;
+        tex_coord_b += texture_offset;
+        tex_coord_a = *texture_scale_rotate * tex_coord_a;
+        tex_coord_b = *texture_scale_rotate * tex_coord_b;
 
         let inv_x_delta = 1.0 / (x_max - x_min) as f32;
 
