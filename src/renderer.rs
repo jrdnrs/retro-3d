@@ -509,7 +509,7 @@ impl Renderer {
             // let alpha = ((normal_depth * 2.0).clamp(0.0, 0.9) * 255.0) as u8;
 
             for y in y_min..y_max {
-                let texture_y = unsafe { v.to_int_unchecked::<usize>() } & height_mask;
+                let texture_y = unsafe { (v * mip_scale).to_int_unchecked::<usize>() } & height_mask;
 
                 let colour = texture.sample(texture_x, texture_y, mip_level);
                 // let colour = BGRA8::BLACK.blend(colour, alpha);
