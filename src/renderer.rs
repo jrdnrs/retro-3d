@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 
 use maths::{
-    geometry::{Polygon, Segment},
+    geometry::{Polygon, Segment, AABB},
     linear::{Mat2f, Vec2f},
 };
 
 use crate::{
     app::{FAR, MAP_DEPTH_RANGE, NEAR},
     camera::Camera,
-    colour::{BGRA8, RGB8},
+    colour::BGRA8,
     player::Player,
     surface::{Sector, Wall},
     textures::{Texture, Textures, MIP_FACTOR, MIP_LEVELS, MIP_SCALES},
@@ -19,6 +19,7 @@ pub struct Framebuffer {
     height: usize,
     half_width: f32,
     half_height: f32,
+    aspect_ratio: f32,
     pixels: Vec<BGRA8>,
 }
 
@@ -32,6 +33,7 @@ impl Framebuffer {
             height,
             half_width: width as f32 * 0.5,
             half_height: height as f32 * 0.5,
+            aspect_ratio: width as f32 / height as f32,
             pixels,
         }
     }
@@ -129,25 +131,30 @@ pub struct Renderer {
     // Number of pixels to shift along Y-axis to simulate pitch (y-shearing)
     pitch_shear: f32,
 
-    // For each X coordinate, defines the upper (inc.) and lower (exc.) bounds of the portal.
+    // For each X coordinate, defines the lower (inc.) and upper (exc.) bounds of the portal.
     // This is used as the clipping region for the next sector to be rendered within.
     portal_bounds_min: Vec<u16>,
     portal_bounds_max: Vec<u16>,
+    new_portal_bounds_min: Vec<u16>,
+    new_portal_bounds_max: Vec<u16>,
 
-    // For each X coordinate, defines the upper (inc.) and lower (exc.) bounds of the walls that
+    // For each X coordinate, defines the lower (inc.) and upper (exc.) bounds of the walls that
     // have been rendered.
     wall_bounds_min: Vec<u16>,
     wall_bounds_max: Vec<u16>,
+
+    // For each X coordinate, stores the depth of the wall that has been rendered on this vertical span.
+    depth: Vec<f32>,
 
     // For each Y coordinate, stores starting X coordinate (inc.) of the horizontal span used to draw the
     // floor/ceiling.
     span_start: Vec<u16>,
 
     // When drawing floor/ceiling spans, we derive the depth based on its screen space Y coordinate.
-    // This is possible because we know the Y coordinate of the floor/ceiling in camera space (which is constant),
+    // This is possible because we know the height of the floor/ceiling in camera space (which is constant),
     // so we can reverse the perspective projection to get the depth.
     // Most of this can be precalculated, and is stored here for each screen space Y coordinate. The result
-    // can be multiplied by the camera space Y coordinate to get the depth.
+    // can be multiplied by the camera space height of the plane to get the depth.
     focal_height_ratios: Vec<f32>,
 }
 
@@ -158,37 +165,29 @@ impl Renderer {
         let framebuffer = Framebuffer::new(screen_width, screen_height);
         let camera = Camera::new(Vec2f::ZERO, 0.0);
 
-        let aspect_ratio = framebuffer.width as f32 / framebuffer.height as f32;
-        let v_fov = h_fov / aspect_ratio;
+        let v_fov = h_fov / framebuffer.aspect_ratio;
 
-        // This is used during perspective projection to convert from camera space to screen space.
-        // It is essentially a scaling factor that is used to get a pixel coordinate from a
-        // coordinate in camera space, taking into account the field of view and screen size.
-        let focal_width = framebuffer.half_width / (h_fov * 0.5).to_radians().tan();
-        let focal_height = framebuffer.half_height / (v_fov * 0.5).to_radians().tan();
+        let (focal_width, focal_height) = focal_dimensions(
+            h_fov,
+            v_fov,
+            framebuffer.half_width,
+            framebuffer.half_height,
+        );
         let inv_focal_width = 1.0 / focal_width;
         let inv_focal_height = 1.0 / focal_height;
 
         let pitch_shear = camera.pitch_tan * focal_height;
 
-        let tan = (h_fov * 0.5).to_radians().tan();
-        let opp_far = FAR * tan;
-        let opp_near = NEAR * tan;
-        let frustum = Polygon::from_vertices(vec![
-            Vec2f::new(-opp_far, FAR),
-            Vec2f::new(opp_far, FAR),
-            Vec2f::new(opp_near, NEAR),
-            Vec2f::new(-opp_near, NEAR),
-        ]);
+        let frustum = view_frustum(h_fov);
 
         let portal_bounds_min = vec![0; screen_width];
         let portal_bounds_max = vec![screen_height as u16; screen_width];
-
+        let new_portal_bounds_min = vec![0; screen_width];
+        let new_portal_bounds_max = vec![screen_height as u16; screen_width];
         let wall_bounds_min = vec![0; screen_width];
         let wall_bounds_max = vec![0; screen_width];
-
+        let depth = vec![0.0; screen_width];
         let span_start = vec![0; screen_height];
-
         let focal_height_ratios = vec![0.0; screen_height];
 
         Self {
@@ -209,9 +208,13 @@ impl Renderer {
 
             portal_bounds_min,
             portal_bounds_max,
+            new_portal_bounds_min,
+            new_portal_bounds_max,
 
             wall_bounds_min,
             wall_bounds_max,
+
+            depth,
 
             span_start,
 
@@ -220,11 +223,10 @@ impl Renderer {
     }
 
     pub fn update(&mut self, player: &Player, textures: &Textures, sectors: &[Sector]) {
-        // Reset buffers
+        // Only buffer that needs to be cleared is the portal bounds buffer, as they
+        // are read from before being overwritten.
         self.portal_bounds_min.fill(0);
         self.portal_bounds_max.fill(self.framebuffer.height as u16);
-        self.wall_bounds_min.fill(0);
-        self.wall_bounds_max.fill(0);
 
         // Use player camera
         self.camera = player.camera.clone();
@@ -260,25 +262,49 @@ impl Renderer {
         }
 
         self.framebuffer = Framebuffer::new(width, height);
-        let aspect_ratio = self.framebuffer.width as f32 / self.framebuffer.height as f32;
-        self.v_fov = self.h_fov / aspect_ratio;
+        self.v_fov = self.h_fov / self.framebuffer.aspect_ratio;
 
-        // Use similar triangles to calculate focal width/height, based on the screen we are
-        // projecting onto and the field of view.
-        self.focal_width = self.framebuffer.half_width / (self.h_fov * 0.5).to_radians().tan();
-        self.focal_height = self.framebuffer.half_height / (self.v_fov * 0.5).to_radians().tan();
+        (self.focal_width, self.focal_height) = focal_dimensions(
+            self.h_fov,
+            self.v_fov,
+            self.framebuffer.half_width,
+            self.framebuffer.half_height,
+        );
         self.inv_focal_width = 1.0 / self.focal_width;
         self.inv_focal_height = 1.0 / self.focal_height;
 
+        // No need to recalculate pitch shear and focal height ratios here, as they are initialised
+        // at the start of `update`.
+
+        // Width and height have changed, so resize buffers
         self.portal_bounds_min = vec![0; width];
         self.portal_bounds_max = vec![height as u16; width];
-
+        self.new_portal_bounds_min = vec![0; width];
+        self.new_portal_bounds_max = vec![height as u16; width];
         self.wall_bounds_min = vec![0; width];
         self.wall_bounds_max = vec![0; width];
-
+        self.depth = vec![0.0; width];
         self.span_start = vec![0; height];
-
         self.focal_height_ratios = vec![0.0; height];
+    }
+
+    pub fn set_fov(&mut self, h_fov: f32) {
+        self.h_fov = h_fov;
+        self.v_fov = self.h_fov / self.framebuffer.aspect_ratio;
+
+        (self.focal_width, self.focal_height) = focal_dimensions(
+            self.h_fov,
+            self.v_fov,
+            self.framebuffer.half_width,
+            self.framebuffer.half_height,
+        );
+        self.inv_focal_width = 1.0 / self.focal_width;
+        self.inv_focal_height = 1.0 / self.focal_height;
+
+        self.frustum = view_frustum(h_fov);
+
+        // No need to recalculate pitch shear and focal height ratios here, as they are initialised
+        // at the start of `update`.
     }
 
     pub fn transform_view(&self, point: Vec2f) -> Vec2f {
@@ -311,17 +337,21 @@ impl Renderer {
         let task = self.tasks.pop_front().unwrap();
         let sector = &sectors[task.sector_index];
 
-        for wall in sector.walls.iter() {
-            let texture = textures.get(wall.texture_index).unwrap();
+        // HACK:
+        for x in task.x_min..task.x_max {
+            self.new_portal_bounds_min[x] = self.portal_bounds_min[x];
+            self.new_portal_bounds_max[x] = self.portal_bounds_max[x];
+        }
 
-            self.draw_wall(sectors, texture, sector, wall, &task);
+        for wall in sector.walls.iter() {
+            self.draw_wall(sectors, textures, sector, wall, &task);
         }
 
         // Draw sector ceiling
         self.draw_plane(
-            textures.get(sector.ceiling.texture_index).unwrap(),
-            sector.ceiling.texture_offset,
-            &sector.ceiling.texture_scale_rotate,
+            textures.get(sector.ceiling.texture_data.index).unwrap(),
+            sector.ceiling.texture_data.offset,
+            &sector.ceiling.texture_data.scale_rotate,
             unsafe { &*(&self.portal_bounds_min as *const Vec<u16>) },
             unsafe { &*(&self.wall_bounds_min as *const Vec<u16>) },
             self.camera.height_offset - sector.ceiling.height,
@@ -331,21 +361,27 @@ impl Renderer {
 
         // Draw sector floor
         self.draw_plane(
-            textures.get(sector.floor.texture_index).unwrap(),
-            sector.floor.texture_offset,
-            &sector.floor.texture_scale_rotate,
+            textures.get(sector.floor.texture_data.index).unwrap(),
+            sector.floor.texture_data.offset,
+            &sector.floor.texture_data.scale_rotate,
             unsafe { &*(&self.wall_bounds_max as *const Vec<u16>) },
             unsafe { &*(&self.portal_bounds_max as *const Vec<u16>) },
             self.camera.height_offset - sector.floor.height,
             task.x_min,
             task.x_max,
         );
+
+        // HACK:
+        for x in task.x_min..task.x_max {
+            self.portal_bounds_min[x] = self.new_portal_bounds_min[x];
+            self.portal_bounds_max[x] = self.new_portal_bounds_max[x];
+        }
     }
 
     fn draw_wall(
         &mut self,
         sectors: &[Sector],
-        texture: &Texture,
+        textures: &Textures,
         sector: &Sector,
         wall: &Wall,
         task: &RenderTask,
@@ -363,10 +399,10 @@ impl Renderer {
         // texture coordinates for all walls in a sector when the sector's ceiling/floor height changes.
         let mut tex_coord_a = Vec2f::new(0.0, 0.0);
         let mut tex_coord_b = Vec2f::new(wall.width, sector.ceiling.height - sector.floor.height);
-        tex_coord_a += wall.texture_offset;
-        tex_coord_b += wall.texture_offset;
-        tex_coord_a *= wall.texture_scale;
-        tex_coord_b *= wall.texture_scale;
+        tex_coord_a += wall.texture_data.offset;
+        tex_coord_b += wall.texture_data.offset;
+        tex_coord_a *= wall.texture_data.scale;
+        tex_coord_b *= wall.texture_data.scale;
 
         // Near plane clipping
         // Due to frustum culling, at most one vertex will be clipped. This also means that the divisor
@@ -389,143 +425,233 @@ impl Renderer {
         let bottom_a = self.project_screen_space(vs_a, sector.floor.height);
         let bottom_b = self.project_screen_space(vs_b, sector.floor.height);
 
+        let inv_depth_a = top_a.1;
+        let inv_depth_b = top_b.1;
+
         // Early out if wall is back-facing
         if top_a.0.x >= top_b.0.x {
             return;
         }
 
+        // Early out if outside of portal bounds
+        if top_b.0.x < task.x_min as f32 || top_a.0.x > task.x_max as f32 {
+            return;
+        }
+
         // Let's clamp X to the screen space bounds
-        let x1_clamp = (top_a.0.x as usize).clamp(task.x_min, task.x_max);
-        let x2_clamp = (top_b.0.x as usize).clamp(task.x_min, task.x_max);
+        let x_min = (top_a.0.x as usize).clamp(task.x_min, task.x_max);
+        let x_max = (top_b.0.x as usize).clamp(task.x_min, task.x_max);
 
-        let renderable_wall = RenderableWall {
-            vertices: [top_a.0, top_b.0, bottom_a.0, bottom_b.0],
-            tex_coords: [tex_coord_a, tex_coord_b],
-            inv_depths: [top_a.1, top_b.1],
-        };
+        let x_delta = top_b.0.x - top_a.0.x;
+        debug_assert!(x_delta > 0.0); // This should never be zero, as we cull back-facing walls
+        let inv_x_delta = 1.0 / x_delta;
 
-        self.rasterise_wall(&renderable_wall, texture, x1_clamp, x2_clamp);
+        if let Some(portal) = wall.portal {
+            let neighbour_top_a =
+                self.project_screen_space(vs_a, sectors[portal.sector].ceiling.height);
+            let neighbour_top_b =
+                self.project_screen_space(vs_b, sectors[portal.sector].ceiling.height);
+            let neighbour_bottom_a =
+                self.project_screen_space(vs_a, sectors[portal.sector].floor.height);
+            let neighbour_bottom_b =
+                self.project_screen_space(vs_b, sectors[portal.sector].floor.height);
 
-        if let Some(sector_index) = wall.portal {
-            // let neighbour_top_a =
-            //     self.project_screen_space(&vs_a, sectors[sector_index].ceiling.height);
-            // let neighbour_top_b =
-            //     self.project_screen_space(&vs_b, sectors[sector_index].ceiling.height);
-            // let neighbour_bottom_a =
-            //     self.project_screen_space(&vs_a, sectors[sector_index].floor.height);
-            // let neighbour_bottom_b =
-            //     self.project_screen_space(&vs_b, sectors[sector_index].floor.height);
+            let mut upper_tex_coord_a = Vec2f::new(0.0, 0.0);
+            let mut upper_tex_coord_b = Vec2f::new(
+                wall.width,
+                sector.ceiling.height - sectors[portal.sector].ceiling.height,
+            );
+            upper_tex_coord_a += portal.upper_texture.offset;
+            upper_tex_coord_b += portal.upper_texture.offset;
+            upper_tex_coord_a *= portal.upper_texture.scale;
+            upper_tex_coord_b *= portal.upper_texture.scale;
+
+            let mut lower_tex_coord_a = Vec2f::new(0.0, 0.0);
+            let mut lower_tex_coord_b = Vec2f::new(
+                wall.width,
+                sectors[portal.sector].floor.height - sector.floor.height,
+            );
+            lower_tex_coord_a += portal.lower_texture.offset;
+            lower_tex_coord_b += portal.lower_texture.offset;
+            lower_tex_coord_a *= portal.lower_texture.scale;
+            lower_tex_coord_b *= portal.lower_texture.scale;
 
             // Rasterise portal wall
+            let upper_wall_lerp = WallInterpolator::new(
+                top_a.0,
+                top_b.0,
+                neighbour_top_a.0,
+                neighbour_top_b.0,
+                upper_tex_coord_a,
+                upper_tex_coord_b,
+                inv_depth_a,
+                inv_depth_b,
+                x_min as f32,
+                inv_x_delta,
+            );
+            let lower_wall_lerp = WallInterpolator::new(
+                neighbour_bottom_a.0,
+                neighbour_bottom_b.0,
+                bottom_a.0,
+                bottom_b.0,
+                lower_tex_coord_a,
+                lower_tex_coord_b,
+                inv_depth_a,
+                inv_depth_b,
+                x_min as f32,
+                inv_x_delta,
+            );
+
+            let upper_texture = textures.get(portal.upper_texture.index).unwrap();
+            let lower_texture = textures.get(portal.lower_texture.index).unwrap();
 
             // TODO:
-            // Portal wall defines new portal bounds. These bounds define where floor/ceiling is drawn for
-            // the current sector, which happens AFTER all walls (including portal walls) have been drawn.
-            // So, we need to store these bounds separately (maybe)
+            // Upper and lower walls of portal can have different textures, thus also texture coordinates.
+            self.rasterise_portal(
+                upper_wall_lerp,
+                lower_wall_lerp,
+                upper_texture,
+                lower_texture,
+                x_min,
+                x_max,
+            );
 
             self.tasks.push_back(RenderTask {
-                sector_index,
-                x_min: x1_clamp,
-                x_max: x2_clamp,
+                sector_index: portal.sector,
+                x_min,
+                x_max,
             })
+        } else {
+            let wall_lerp = WallInterpolator::new(
+                top_a.0,
+                top_b.0,
+                bottom_a.0,
+                bottom_b.0,
+                tex_coord_a,
+                tex_coord_b,
+                inv_depth_a,
+                inv_depth_b,
+                x_min as f32,
+                inv_x_delta,
+            );
+
+            let texture = textures.get(wall.texture_data.index).unwrap();
+
+            self.rasterise_wall(wall_lerp, texture, x_min, x_max);
         }
     }
 
     fn rasterise_wall(
         &mut self,
-        wall: &RenderableWall,
+        mut wall: WallInterpolator,
         texture: &Texture,
         x_min: usize,
         x_max: usize,
     ) {
-        const TOP_A: usize = 0;
-        const TOP_B: usize = 1;
-        const BOTTOM_A: usize = 2;
-        const BOTTOM_B: usize = 3;
-
-        let x_delta = wall.vertices[TOP_B].x - wall.vertices[TOP_A].x;
-        debug_assert!(x_delta > 0.0); // This should never be zero, as we cull back-facing walls
-        let inv_x_delta = 1.0 / x_delta;
-
-        // Divide texture coordinates by depth to account for perspective projection during interpolation.
-        // After interpolation, multiply by depth to recover the original texture coordinates.
-        // For walls, we only need to do this for the X coordinate, as the Y coordinate has constant depth.
-        let u_depth_a = wall.tex_coords[TOP_A].x * wall.inv_depths[TOP_A];
-        let u_depth_b = wall.tex_coords[TOP_B].x * wall.inv_depths[TOP_B];
-
-        // Gradients with respect to X
-        let inv_depth_m = (wall.inv_depths[TOP_B] - wall.inv_depths[TOP_A]) * inv_x_delta;
-        let top_y_m = (wall.vertices[TOP_B].y - wall.vertices[TOP_A].y) * inv_x_delta;
-        let bottom_y_m = (wall.vertices[BOTTOM_B].y - wall.vertices[BOTTOM_A].y) * inv_x_delta;
-        let u_depth_m = (u_depth_b - u_depth_a) * inv_x_delta;
-
-        // Interpolator start values
-        let mut inv_depth = wall.inv_depths[TOP_A];
-        let mut top_y = wall.vertices[TOP_A].y;
-        let mut bottom_y = wall.vertices[BOTTOM_A].y;
-        let mut u_depth = u_depth_a;
-
-        // X offset caused by clamping vertices to screen space bounds
-        let x_clamp_offset = x_min as f32 - wall.vertices[TOP_A].x;
-
-        // We need to update our interpolators to account difference in X caused by clamping
-        inv_depth += inv_depth_m * x_clamp_offset;
-        top_y += top_y_m * x_clamp_offset;
-        bottom_y += bottom_y_m * x_clamp_offset;
-        u_depth += u_depth_m * x_clamp_offset;
-
         // Draw wall, one column at a time
         for x in x_min..x_max {
             let min_portal_bound = self.portal_bounds_min[x] as usize;
             let max_portal_bound = self.portal_bounds_max[x] as usize;
 
-            // Clamp Y to the screen space bounds
-            let y_min = (top_y as usize).clamp(min_portal_bound, max_portal_bound);
-            let y_max = (bottom_y as usize).clamp(min_portal_bound, max_portal_bound);
-            let y_clamp_offset = y_min as f32 - top_y;
+            // Clamp Y to the screen portal bounds
+            let y_min = (wall.top_y as usize).clamp(min_portal_bound, max_portal_bound);
+            let y_max = (wall.bottom_y as usize).clamp(min_portal_bound, max_portal_bound);
 
-            // Interpolate V with respect to Y
-            let v_m = (wall.tex_coords[TOP_B].y - wall.tex_coords[TOP_A].y) / (bottom_y - top_y);
-            let mut v = wall.tex_coords[TOP_A].y;
+            // TODO: I don't actually think we need to clamp Y here, as this sort of thing is only
+            // necessary for portal rasterisation due to the way they interact with the next sector,
+            // potentially causing strangeness.
 
-            // Account for difference caused by clamping Y
-            v += v_m * y_clamp_offset;
+            // Ensure that max >= min using min as boundary (for no perticular reason)
+            // let y_max = y_max.max(y_min);
 
-            let depth = 1.0 / inv_depth;
-            let normal_depth = normalise_depth(depth);
-            // TODO: Bias mip level based on surface angle?
-            let mip_level = mip_level(normal_depth, 0.0);
-            let mip_scale = MIP_SCALES[mip_level];
-
-            // Recover U texture coordinate after interpolating in depth space
-            let u = u_depth * depth;
-
-            let width_mask = texture.levels[mip_level].width - 1;
-            let height_mask = texture.levels[mip_level].height - 1;
-
-            let texture_x = unsafe { (u * mip_scale).to_int_unchecked::<usize>() } & width_mask;
-
-            // Testing diminished lighting effect
-            // let alpha = ((normal_depth * 2.0).clamp(0.0, 0.9) * 255.0) as u8;
-
-            for y in y_min..y_max {
-                let texture_y = unsafe { (v * mip_scale).to_int_unchecked::<usize>() } & height_mask;
-
-                let colour = texture.sample(texture_x, texture_y, mip_level);
-                // let colour = BGRA8::BLACK.blend(colour, alpha);
-
-                self.framebuffer.set_pixel(x, y, colour);
-
-                v += v_m;
-            }
+            self.rasterise_wall_span(&mut wall, texture, x, y_min, y_max);
 
             self.wall_bounds_min[x] = y_min as u16;
             self.wall_bounds_max[x] = y_max as u16;
 
-            inv_depth += inv_depth_m;
-            top_y += top_y_m;
-            bottom_y += bottom_y_m;
-            u_depth += u_depth_m;
+            wall.step_x();
+        }
+    }
+
+    fn rasterise_portal(
+        &mut self,
+        mut upper_wall: WallInterpolator,
+        mut lower_wall: WallInterpolator,
+        upper_texture: &Texture,
+        lower_texture: &Texture,
+        x_min: usize,
+        x_max: usize,
+    ) {
+        // Draw wall, one column at a time
+        for x in x_min..x_max {
+            let min_portal_bound = self.portal_bounds_min[x] as usize;
+            let max_portal_bound = self.portal_bounds_max[x] as usize;
+
+            let upper_y_min = (upper_wall.top_y as usize).clamp(min_portal_bound, max_portal_bound);
+            let upper_y_max =
+                (upper_wall.bottom_y as usize).clamp(min_portal_bound, max_portal_bound);
+            // Ensure that max >= min using min as boundary (to bias towards upper portal)
+            let upper_y_max = upper_y_max.max(upper_y_min);
+
+            let lower_y_max =
+                (lower_wall.bottom_y as usize).clamp(min_portal_bound, max_portal_bound);
+            let lower_y_min = (lower_wall.top_y as usize).clamp(min_portal_bound, max_portal_bound);
+            // Ensure that min <= max using max as boundary (to bias towards lower portal)
+            let lower_y_min = lower_y_min.min(lower_y_max);
+
+            // Ensure that lower portal is always below upper portal
+            let lower_y_max = lower_y_max.max(upper_y_max);
+            let lower_y_min = lower_y_min.max(upper_y_max);
+
+            self.rasterise_wall_span(&mut upper_wall, upper_texture, x, upper_y_min, upper_y_max);
+            self.rasterise_wall_span(&mut lower_wall, lower_texture, x, lower_y_min, lower_y_max);
+
+            self.wall_bounds_min[x] = upper_y_min as u16;
+            self.wall_bounds_max[x] = lower_y_max as u16;
+
+            self.new_portal_bounds_min[x] = upper_y_max as u16;
+            self.new_portal_bounds_max[x] = lower_y_min as u16;
+
+            upper_wall.step_x();
+            lower_wall.step_x();
+        }
+    }
+
+    fn rasterise_wall_span(
+        &mut self,
+        wall: &mut WallInterpolator,
+        texture: &Texture,
+        x: usize,
+        y_min: usize,
+        y_max: usize,
+    ) {
+        wall.init_y(y_min);
+
+        let depth = 1.0 / wall.inv_depth;
+        let normal_depth = normalise_depth(depth);
+        // TODO: Bias mip level based on surface angle?
+        let mip_level = mip_level(normal_depth, 0.0);
+        let mip_scale = MIP_SCALES[mip_level];
+
+        // Store depth for this vertical span
+        self.depth[x] = depth;
+
+        // Recover U texture coordinate after interpolating in depth space
+        let u = wall.u_depth * depth;
+
+        let width_mask = texture.levels[mip_level].width - 1;
+        let height_mask = texture.levels[mip_level].height - 1;
+
+        let texture_x = unsafe { (u * mip_scale).to_int_unchecked::<usize>() } & width_mask;
+
+        for y in y_min..y_max {
+            let texture_y =
+                unsafe { (wall.v * mip_scale).to_int_unchecked::<usize>() } & height_mask;
+
+            let colour = texture.sample(texture_x, texture_y, mip_level);
+            self.framebuffer.set_pixel(x, y, colour);
+
+            wall.step_y();
         }
     }
 
@@ -617,8 +743,18 @@ impl Renderer {
         x_min: usize,
         x_max: usize,
     ) {
-        // This shouldn't be possible, when called from `draw_plane`, as
-        debug_assert!(x_min < x_max);
+        // This shouldn't be possible, when called from `draw_plane`, but I think sometimes
+        // `x_min` and `x_max` can be equal, which is fine as it will just draw nothing.
+        // However, if `x_min` is greater than `x_max`, this is indicative of a bug.
+        debug_assert!(
+            x_min <= x_max,
+            "x_max is greater than x_min :: x_min: {}, x_max: {}",
+            x_min,
+            x_max
+        );
+        if x_max <= x_min {
+            return;
+        }
 
         let focal_height_ratio = self.focal_height_ratios[y];
         let depth = focal_height_ratio * height_offset;
@@ -626,6 +762,8 @@ impl Renderer {
         let mip_level = mip_level(normal_depth, 6.0);
         let mip_scale = MIP_SCALES[mip_level];
 
+        // Calculate world space coordinates of either end of the span, via reversing the perspective
+        // projection, and use these as the texture coordinates.
         let ws_1 = Vec2f::new(
             ((x_min as f32 - self.framebuffer.half_width) * depth) * self.inv_focal_width,
             -depth,
@@ -655,21 +793,16 @@ impl Renderer {
         let u_m = (tex_coord_b.x - tex_coord_a.x) * inv_x_delta;
         let mut u = tex_coord_a.x;
 
-        // Testing diminished lighting effect
-        // let alpha = ((normal_depth * 2.0).clamp(0.0, 0.9) * 255.0) as u8;
-
         let width_mask = texture.levels[mip_level].width - 1;
         let height_mask = texture.levels[mip_level].height - 1;
 
         for x in x_min..x_max {
-            // let texture_x = u.abs() as usize & width_mask;
+            // U and V are in world space, thus could be negative. We would need to `abs` these,
+            // but an unchecked cast works too.
             let texture_x = unsafe { u.to_int_unchecked::<usize>() } & width_mask;
-            // let texture_y = v.abs() as usize & height_mask;
             let texture_y = unsafe { v.to_int_unchecked::<usize>() } & height_mask;
 
             let colour = texture.sample(texture_x, texture_y, mip_level);
-            // let colour = BGRA8::BLACK.blend(colour, alpha);
-
             self.framebuffer.set_pixel(x, y, colour);
 
             u += u_m;
@@ -678,16 +811,142 @@ impl Renderer {
     }
 }
 
+/// Map a linear depth value, ranging from [NEAR] to [FAR], to a normalised depth value, ranging from 0.0 to 1.0.
 fn normalise_depth(depth: f32) -> f32 {
     (depth - NEAR) * MAP_DEPTH_RANGE
 }
 
+/// Calculates an appropriate mip level based on the normalised depth and a bias.
 fn mip_level(normal_depth: f32, bias: f32) -> usize {
     (((MIP_FACTOR + bias) * normal_depth) as usize).min(MIP_LEVELS - 1)
 }
 
-struct RenderableWall {
-    vertices: [Vec2f; 4],
-    tex_coords: [Vec2f; 2],
-    inv_depths: [f32; 2],
+/// This is used during perspective projection to convert from camera space to screen space.
+/// It is essentially a scaling factor that is used to get a pixel coordinate from a
+/// coordinate in camera space, taking into account the field of view and screen size.
+fn focal_dimensions(h_fov: f32, v_fov: f32, half_width: f32, half_height: f32) -> (f32, f32) {
+    // Use similar triangles to calculate focal width/height, based on the screen we are
+    // projecting onto and the field of view.
+    let focal_width = half_width / (h_fov * 0.5).to_radians().tan();
+    let focal_height = half_height / (v_fov * 0.5).to_radians().tan();
+
+    (focal_width, focal_height)
+}
+
+/// Returns a polygon representing the view frustum, based on the given horizontal field of view.
+fn view_frustum(h_fov: f32) -> Polygon {
+    let tan = (h_fov * 0.5).to_radians().tan();
+    let opp_far = FAR * tan;
+    let opp_near = NEAR * tan;
+
+    Polygon::from_vertices(vec![
+        Vec2f::new(-opp_far, FAR),
+        Vec2f::new(opp_far, FAR),
+        Vec2f::new(opp_near, NEAR),
+        Vec2f::new(-opp_near, NEAR),
+    ])
+}
+
+struct WallInterpolator {
+    inv_depth: f32,
+    top_y: f32,
+    bottom_y: f32,
+    u_depth: f32,
+    inv_depth_m: f32,
+    top_y_m: f32,
+    bottom_y_m: f32,
+    u_depth_m: f32,
+
+    v_start: f32,
+    v_delta: f32,
+    v: f32,
+    v_m: f32,
+}
+
+impl WallInterpolator {
+    fn new(
+        top_a: Vec2f,
+        top_b: Vec2f,
+        bottom_a: Vec2f,
+        bottom_b: Vec2f,
+        tex_coord_a: Vec2f,
+        tex_coord_b: Vec2f,
+        inv_depth_a: f32,
+        inv_depth_b: f32,
+        x_min: f32,
+        inv_x_delta: f32,
+    ) -> Self {
+        // Divide texture coordinates by depth to account for perspective projection during interpolation.
+        // After interpolation, multiply by depth to recover the original texture coordinates.
+        // For walls, we only need to do this for the X coordinate, as the Y coordinate has constant depth.
+        let u_depth_a = tex_coord_a.x * inv_depth_a;
+        let u_depth_b = tex_coord_b.x * inv_depth_b;
+
+        // Gradients with respect to X
+        let inv_depth_m = (inv_depth_b - inv_depth_a) * inv_x_delta;
+        let top_y_m = (top_b.y - top_a.y) * inv_x_delta;
+        let bottom_y_m = (bottom_b.y - bottom_a.y) * inv_x_delta;
+        let u_depth_m = (u_depth_b - u_depth_a) * inv_x_delta;
+
+        // Interpolator start values
+        let mut inv_depth = inv_depth_a;
+        let mut top_y = top_a.y;
+        let mut bottom_y = bottom_a.y;
+        let mut u_depth = u_depth_a;
+
+        // X offset caused by clamping vertices to screen space bounds
+        let x_clamp_offset = x_min - top_a.x;
+
+        // We need to update our interpolators to account difference in X caused by clamping
+        inv_depth += inv_depth_m * x_clamp_offset;
+        top_y += top_y_m * x_clamp_offset;
+        bottom_y += bottom_y_m * x_clamp_offset;
+        u_depth += u_depth_m * x_clamp_offset;
+
+        let v_start = tex_coord_a.y;
+        let v_delta = tex_coord_b.y - tex_coord_a.y;
+        let v = 0.0;
+        let v_m = 0.0;
+
+        Self {
+            inv_depth,
+            top_y,
+            bottom_y,
+            u_depth,
+            inv_depth_m,
+            top_y_m,
+            bottom_y_m,
+            u_depth_m,
+
+            v_start,
+            v_delta,
+            v,
+            v_m,
+        }
+    }
+
+    fn init_y(&mut self, y_min: usize) {
+        // Y offset caused by clamping vertices to screen space bounds
+        let y_clamp_offset = y_min as f32 - self.top_y;
+
+        // Gradient with respect to Y
+        self.v_m = self.v_delta / (self.bottom_y - self.top_y);
+
+        // Interpolator start value
+        self.v = self.v_start;
+
+        // Account for difference caused by clamping Y
+        self.v += self.v_m * y_clamp_offset;
+    }
+
+    fn step_x(&mut self) {
+        self.inv_depth += self.inv_depth_m;
+        self.top_y += self.top_y_m;
+        self.bottom_y += self.bottom_y_m;
+        self.u_depth += self.u_depth_m;
+    }
+
+    fn step_y(&mut self) {
+        self.v += self.v_m;
+    }
 }
