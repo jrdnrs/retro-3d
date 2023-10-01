@@ -11,6 +11,11 @@ pub struct Player {
     pub camera: Camera,
     pub collider: Collider,
     pub bounds: AABB,
+    pub sector_index: usize,
+
+    pub velocity: Vec2f,
+
+    pub prev_position: Vec2f,
 }
 
 impl Player {
@@ -22,34 +27,67 @@ impl Player {
             camera,
             collider,
             bounds,
+            sector_index: 0,
+
+            velocity: Vec2f::ZERO,
+
+            prev_position: position,
         }
     }
 
     pub fn update(&mut self, delta_seconds: f32, input: &Input) {
-        if !input.mouse.is_grabbed() {
-            return;
-        }
+        let friction_mag = 175.0;
+        let impulse_mag = 250.0;
+        let max_speed = 50.0;
 
-        let mut mouse_delta = input.mouse.get_delta();
-        // Negate y-axis to make up positive, as the y-axis is flipped in screen space
-        mouse_delta.y = -mouse_delta.y;
+        let mut mouse_delta = Vec2f::ZERO;
+
+        if input.mouse.is_grabbed() {
+            let mut impulse = Vec2f::ZERO;
+
+            if input.keyboard.is_key_held(KeyCode::W) {
+                impulse += self.camera.direction;
+            } else if input.keyboard.is_key_held(KeyCode::S) {
+                impulse -= self.camera.direction;
+            }
+
+            if input.keyboard.is_key_held(KeyCode::A) {
+                impulse += self.camera.direction.perpendicular();
+            } else if input.keyboard.is_key_held(KeyCode::D) {
+                impulse -= self.camera.direction.perpendicular();
+            }
+
+            // normalise the direction, and scale by impulse
+            impulse = impulse.normalise() * impulse_mag;
+
+            // apply acceleration
+            self.velocity += impulse * delta_seconds;
+
+            mouse_delta = input.mouse.get_delta();
+            // Negate y-axis to make up positive, as the y-axis is flipped in screen space
+            mouse_delta.y = -mouse_delta.y;
+        }
 
         let rot_delta = mouse_delta * MOUSE_SENSITIVITY * delta_seconds;
-        let mut pos_delta = Vec2f::ZERO;
 
-        if input.keyboard.is_key_held(KeyCode::W) {
-            pos_delta += self.camera.direction;
-        } else if input.keyboard.is_key_held(KeyCode::S) {
-            pos_delta -= self.camera.direction;
+        // Apply friction
+        let friction_impulse = -(self.velocity / self.velocity.magnitude().max(1.0)) * friction_mag;
+        self.velocity += friction_impulse * delta_seconds;
+
+        // Clamp velocity to max speed
+        let speed = self.velocity.magnitude();
+        if speed > max_speed {
+            self.velocity /= speed;
+            self.velocity *= max_speed;
         }
 
-        if input.keyboard.is_key_held(KeyCode::A) {
-            pos_delta += self.camera.direction.perpendicular();
-        } else if input.keyboard.is_key_held(KeyCode::D) {
-            pos_delta -= self.camera.direction.perpendicular();
+        // Flush velocity to zero if it's small enough
+        if self.velocity.magnitude() < 0.0001 {
+            self.velocity = Vec2f::ZERO;
         }
 
-        pos_delta *= delta_seconds * 20.0;
+        let pos_delta = self.velocity * delta_seconds;
+        self.prev_position = self.camera.position;
 
         self.collider.translate(pos_delta);
         self.camera.update(pos_delta, rot_delta);
