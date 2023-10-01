@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use input::Input;
 use maths::{
-    geometry::AABB,
+    geometry::{Segment, AABB},
     linear::{Mat2f, Vec2f},
 };
 use physics::collider::Collider;
@@ -17,17 +17,17 @@ use windows_sys::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use crate::{
     player::Player,
     renderer::Renderer,
-    surface::{Plane, Sector, Wall, WallTexture, PlaneTexture, Portal},
+    surface::{Plane, PlaneTexture, Portal, Sector, Sprite, Wall, WallTexture},
     textures::{self, Textures},
     timer::Timer,
 };
 
-pub const DEFAULT_WIDTH: usize = 640;
-pub const DEFAULT_HEIGHT: usize = 400;
-pub const DEFAULT_FOV: f32 = 75.0;
+pub const INTERNAL_WIDTH: usize = 640;
+pub const INTERNAL_HEIGHT: usize = 400;
+pub const HFOV: f32 = 75.0;
 pub const FPS: f32 = 120.0;
 
-pub const NEAR: f32 = 1.0;
+pub const NEAR: f32 = 0.00001;
 pub const FAR: f32 = 512.0;
 pub const MAP_DEPTH_RANGE: f32 = 1.0 / (FAR - NEAR);
 
@@ -40,21 +40,22 @@ pub struct App {
     textures: Textures,
     player: Player,
     sectors: Vec<Sector>,
+    sprites: Vec<Sprite>,
 }
 
 impl App {
     pub fn new() -> Self {
         let window = Window::new(WindowAttributes {
-            title: format!("Pseudo3D  {}x{}  ({}x)", DEFAULT_WIDTH, DEFAULT_HEIGHT, 2),
-            size: WindowSize::new(DEFAULT_WIDTH * 2, DEFAULT_HEIGHT * 2),
-            surface_size: Some(WindowSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT)),
+            title: format!("Pseudo3D  {}x{}  ({}x)", INTERNAL_WIDTH, INTERNAL_HEIGHT, 2),
+            size: WindowSize::new(INTERNAL_WIDTH * 2, INTERNAL_HEIGHT * 2),
+            surface_size: Some(WindowSize::new(INTERNAL_WIDTH, INTERNAL_HEIGHT)),
             position: WindowPosition::new(200, 200),
             resizable: false,
             ..Default::default()
         });
         let input = Input::new();
         let timer = Timer::new();
-        let renderer = Renderer::new(DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_FOV);
+        let renderer = Renderer::new(INTERNAL_WIDTH, INTERNAL_HEIGHT, HFOV);
 
         let textures = Textures::new();
         let player = Player::new(
@@ -72,6 +73,7 @@ impl App {
             textures,
             player,
             sectors: Vec::new(),
+            sprites: Vec::new(),
         }
     }
 
@@ -82,8 +84,10 @@ impl App {
             timeBeginPeriod(1)
         };
 
-        self.textures.load_default();
+        // Enable debug drawing
+        self.renderer.state_mut().debug = true;
 
+        self.textures.load_default();
 
         // Place player in sector 0
         self.player.camera.position = Vec2f::new(105.0, 180.0);
@@ -94,73 +98,226 @@ impl App {
 
         let x5_scale = Mat2f::rotation(1.1) * Mat2f::scale(Vec2f::uniform(5.0));
 
-        let stone_brick_wall = WallTexture::new(textures::STONE_BRICK, Vec2f::ZERO, Vec2f::uniform(5.0));
+        let stone_brick_wall =
+            WallTexture::new(textures::STONE_BRICK, Vec2f::ZERO, Vec2f::uniform(5.0));
         let grass_floor = PlaneTexture::new(textures::GRASS, Vec2f::ZERO, Vec2f::uniform(5.0), 0.0);
-        let wood_ceiling = PlaneTexture::new(textures::PLANK, Vec2f::ZERO, Vec2f::uniform(5.0), 0.0);
+        let wood_ceiling =
+            PlaneTexture::new(textures::PLANK, Vec2f::ZERO, Vec2f::uniform(5.0), 0.0);
 
         self.sectors = vec![
             Sector {
-               walls: vec![
-                   Wall::new(Vec2f::new(80.0, 200.0), Vec2f::new(130.0, 200.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(130.0, 200.0), Vec2f::new(130.0, 140.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(130.0, 140.0), Vec2f::new(90.0, 140.0), stone_brick_wall, Some(Portal::new(1, stone_brick_wall, stone_brick_wall))),
-                   Wall::new(Vec2f::new(90.0, 140.0), Vec2f::new(80.0, 160.0), stone_brick_wall, Some(Portal::new(4, stone_brick_wall, stone_brick_wall))),
-                   Wall::new(Vec2f::new(80.0, 160.0), Vec2f::new(80.0, 200.0), stone_brick_wall, None),
-                   ],
-               floor: Plane::new(0.0, grass_floor),
-               ceiling: Plane::new(25.0, wood_ceiling),
-               },
-            
+                id: 0,
+                walls: vec![
+                    Wall::new(
+                        Vec2f::new(80.0, 200.0),
+                        Vec2f::new(130.0, 200.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(130.0, 200.0),
+                        Vec2f::new(130.0, 140.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(130.0, 140.0),
+                        Vec2f::new(90.0, 140.0),
+                        stone_brick_wall,
+                        Some(Portal::new(1, stone_brick_wall, stone_brick_wall)),
+                    ),
+                    Wall::new(
+                        Vec2f::new(90.0, 140.0),
+                        Vec2f::new(80.0, 160.0),
+                        stone_brick_wall,
+                        Some(Portal::new(4, stone_brick_wall, stone_brick_wall)),
+                    ),
+                    Wall::new(
+                        Vec2f::new(80.0, 160.0),
+                        Vec2f::new(80.0, 200.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                ],
+                floor: Plane::new(0.0, grass_floor),
+                ceiling: Plane::new(25.0, wood_ceiling),
+            },
             Sector {
-               walls: vec![
-                   Wall::new(Vec2f::new(90.0, 140.0), Vec2f::new(130.0, 140.0), stone_brick_wall, Some(Portal::new(0, stone_brick_wall, stone_brick_wall))),	 		
-                   Wall::new(Vec2f::new(130.0, 140.0), Vec2f::new(130.0, 100.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(130.0, 100.0), Vec2f::new(80.0, 100.0), stone_brick_wall, Some(Portal::new(2, stone_brick_wall, stone_brick_wall))),
-                   Wall::new(Vec2f::new(80.0, 100.0), Vec2f::new(80.0, 130.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(80.0, 130.0), Vec2f::new(90.0, 140.0), stone_brick_wall, Some(Portal::new(4, stone_brick_wall, stone_brick_wall))),
-                   ],
-               floor: Plane::new(0.0, grass_floor),
-               ceiling: Plane::new(25.0, wood_ceiling),
-               },
-            
+                id: 1,
+                walls: vec![
+                    Wall::new(
+                        Vec2f::new(90.0, 140.0),
+                        Vec2f::new(130.0, 140.0),
+                        stone_brick_wall,
+                        Some(Portal::new(0, stone_brick_wall, stone_brick_wall)),
+                    ),
+                    Wall::new(
+                        Vec2f::new(130.0, 140.0),
+                        Vec2f::new(130.0, 100.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(130.0, 100.0),
+                        Vec2f::new(80.0, 100.0),
+                        stone_brick_wall,
+                        Some(Portal::new(2, stone_brick_wall, stone_brick_wall)),
+                    ),
+                    Wall::new(
+                        Vec2f::new(80.0, 100.0),
+                        Vec2f::new(80.0, 130.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(80.0, 130.0),
+                        Vec2f::new(90.0, 140.0),
+                        stone_brick_wall,
+                        Some(Portal::new(4, stone_brick_wall, stone_brick_wall)),
+                    ),
+                ],
+                floor: Plane::new(0.0, grass_floor),
+                ceiling: Plane::new(25.0, wood_ceiling),
+            },
             Sector {
-               walls: vec![
-                   Wall::new(Vec2f::new(80.0, 100.0), Vec2f::new(130.0, 100.0), stone_brick_wall, Some(Portal::new(1, stone_brick_wall, stone_brick_wall))),
-                   Wall::new(Vec2f::new(130.0, 100.0), Vec2f::new(150.0,  80.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(150.0,  80.0), Vec2f::new(150.0,  60.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(150.0,  60.0), Vec2f::new(100.0,  60.0), stone_brick_wall, Some(Portal::new(3, stone_brick_wall, stone_brick_wall))),
-                   Wall::new(Vec2f::new(100.0,  60.0), Vec2f::new(60.0,  60.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(60.0,  60.0), Vec2f::new(60.0,  80.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(60.0,  80.0), Vec2f::new(80.0, 100.0), stone_brick_wall, None),
-                   ],
-               floor: Plane::new(0.0, grass_floor),
-               ceiling: Plane::new(25.0, wood_ceiling),
-               },
-           
+                id: 2,
+                walls: vec![
+                    Wall::new(
+                        Vec2f::new(80.0, 100.0),
+                        Vec2f::new(130.0, 100.0),
+                        stone_brick_wall,
+                        Some(Portal::new(1, stone_brick_wall, stone_brick_wall)),
+                    ),
+                    Wall::new(
+                        Vec2f::new(130.0, 100.0),
+                        Vec2f::new(150.0, 80.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(150.0, 80.0),
+                        Vec2f::new(150.0, 60.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(150.0, 60.0),
+                        Vec2f::new(100.0, 60.0),
+                        stone_brick_wall,
+                        Some(Portal::new(3, stone_brick_wall, stone_brick_wall)),
+                    ),
+                    Wall::new(
+                        Vec2f::new(100.0, 60.0),
+                        Vec2f::new(60.0, 60.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(60.0, 60.0),
+                        Vec2f::new(60.0, 80.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(60.0, 80.0),
+                        Vec2f::new(80.0, 100.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                ],
+                floor: Plane::new(0.0, grass_floor),
+                ceiling: Plane::new(20.0, wood_ceiling),
+            },
             Sector {
-               walls: vec![
-                   Wall::new(Vec2f::new(100.0,  60.0), Vec2f::new(150.0,  60.0), stone_brick_wall, Some(Portal::new(2, stone_brick_wall, stone_brick_wall))),
-                   Wall::new(Vec2f::new(150.0,  60.0), Vec2f::new(150.0,  30.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(150.0,  30.0), Vec2f::new(100.0,  30.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(100.0,  30.0), Vec2f::new(100.0,  60.0), stone_brick_wall, None),
-                   ],
-               floor: Plane::new(5.0, grass_floor),
-               ceiling: Plane::new(25.0, wood_ceiling),
-               },
-           
+                id: 3,
+                walls: vec![
+                    Wall::new(
+                        Vec2f::new(100.0, 60.0),
+                        Vec2f::new(150.0, 60.0),
+                        stone_brick_wall,
+                        Some(Portal::new(2, stone_brick_wall, stone_brick_wall)),
+                    ),
+                    Wall::new(
+                        Vec2f::new(150.0, 60.0),
+                        Vec2f::new(150.0, 30.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(150.0, 30.0),
+                        Vec2f::new(100.0, 30.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(100.0, 30.0),
+                        Vec2f::new(100.0, 60.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                ],
+                floor: Plane::new(5.0, grass_floor),
+                ceiling: Plane::new(25.0, wood_ceiling),
+            },
             Sector {
-               walls: vec![
-                   Wall::new(Vec2f::new(40.0, 160.0), Vec2f::new(80.0, 160.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(80.0, 160.0), Vec2f::new(90.0, 140.0), stone_brick_wall, Some(Portal::new(0, stone_brick_wall, stone_brick_wall))),
-                   Wall::new(Vec2f::new(90.0, 140.0), Vec2f::new(80.0, 130.0), stone_brick_wall, Some(Portal::new(1, stone_brick_wall, stone_brick_wall))),
-                   Wall::new(Vec2f::new(80.0, 130.0), Vec2f::new(40.0, 130.0), stone_brick_wall, None),
-                   Wall::new(Vec2f::new(40.0, 130.0), Vec2f::new(40.0, 160.0), stone_brick_wall, None),
-                   ],
-               floor: Plane::new(10.0, grass_floor),
-               ceiling: Plane::new(20.0, wood_ceiling),
-               },
-           ];
-      
+                id: 4,
+                walls: vec![
+                    Wall::new(
+                        Vec2f::new(40.0, 160.0),
+                        Vec2f::new(80.0, 160.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(80.0, 160.0),
+                        Vec2f::new(90.0, 140.0),
+                        stone_brick_wall,
+                        Some(Portal::new(0, stone_brick_wall, stone_brick_wall)),
+                    ),
+                    Wall::new(
+                        Vec2f::new(90.0, 140.0),
+                        Vec2f::new(80.0, 130.0),
+                        stone_brick_wall,
+                        Some(Portal::new(1, stone_brick_wall, stone_brick_wall)),
+                    ),
+                    Wall::new(
+                        Vec2f::new(80.0, 130.0),
+                        Vec2f::new(40.0, 130.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                    Wall::new(
+                        Vec2f::new(40.0, 130.0),
+                        Vec2f::new(40.0, 160.0),
+                        stone_brick_wall,
+                        None,
+                    ),
+                ],
+                floor: Plane::new(10.0, grass_floor),
+                ceiling: Plane::new(20.0, wood_ceiling),
+            },
+        ];
+
+        self.sprites = vec![
+            Sprite::new(
+                Vec2f::new(140.0, 80.0),
+                WallTexture::new(textures::GOBLIN, Vec2f::ZERO, Vec2f::uniform(8.0)),
+                15.0,
+                15.0,
+            ),
+            Sprite::new(
+                Vec2f::new(80.0, 80.0),
+                WallTexture::new(textures::GOBLIN, Vec2f::ZERO, Vec2f::uniform(8.0)),
+                15.0,
+                15.0,
+            ),
+            // Sprite::new(
+            //     Vec2f::new(124.0, 143.0),
+            //     WallTexture::new(textures::PORTAL, Vec2f::ZERO, Vec2f::uniform(5.0)),
+            //     20.0,
+            //     15.0,
+            // ),
+        ];
     }
 
     pub fn update(&mut self) {
@@ -168,9 +325,27 @@ impl App {
 
         self.player.update(delta_seconds, &self.input);
 
+        // Update current sector
+        let displacement_segment =
+            Segment::new(self.player.camera.position, self.player.prev_position);
+        for wall in self.sectors[self.player.sector_index].walls.iter() {
+            if let Some(portal) = wall.portal {
+                let wall_segment = Segment::new(wall.a, wall.b);
+                if displacement_segment.intersects(&wall_segment) {
+                    self.player.sector_index = portal.sector;
+                    break;
+                }
+            }
+        }
+
         // No need to render if window is minimised
         if self.window.get_minimised() {
             return;
+        }
+
+        // Toggle debug drawing
+        if self.input.keyboard.is_key_pressed(KeyCode::F3) {
+            self.renderer.state_mut().debug = !self.renderer.state().debug;
         }
 
         // Toggle cursor grab
@@ -186,7 +361,7 @@ impl App {
             self.input.mouse.grabbed = false;
         }
 
-        // Scale window
+        // Integer window scaling
         if self.input.keyboard.is_key_held(KeyCode::ControlLeft)
             || self.input.keyboard.is_key_held(KeyCode::ControlRight)
         {
@@ -204,12 +379,12 @@ impl App {
                     let scale = i + 1;
 
                     window.set_size(WindowSize::new(
-                        DEFAULT_WIDTH * scale,
-                        DEFAULT_HEIGHT * scale,
+                        INTERNAL_WIDTH * scale,
+                        INTERNAL_HEIGHT * scale,
                     ));
                     window.set_title(&format!(
                         "Pseudo3D  {}x{}  ({}x)",
-                        DEFAULT_WIDTH, DEFAULT_HEIGHT, scale
+                        INTERNAL_WIDTH, INTERNAL_HEIGHT, scale
                     ));
 
                     break;
@@ -219,26 +394,38 @@ impl App {
 
         // Test changing sector ceiling height
         if self.input.keyboard.is_key_held(KeyCode::ArrowUp) {
-            self.sectors[0].ceiling.height += 10.0 * delta_seconds
+            self.sectors[self.player.sector_index].ceiling.height += 10.0 * delta_seconds
         } else if self.input.keyboard.is_key_held(KeyCode::ArrowDown) {
-            self.sectors[0].ceiling.height -= 10.0 * delta_seconds
+            self.sectors[self.player.sector_index].ceiling.height -= 10.0 * delta_seconds
         }
 
         // Test changing floor/ceiling texture rotation
         if self.input.keyboard.is_key_held(KeyCode::ArrowLeft) {
-            self.sectors[0].floor.texture_data.scale_rotate =
-                Mat2f::rotation(0.01 * self.timer.frame_count as f32) * Mat2f::scale(Vec2f::uniform(5.0));
-            self.sectors[0].ceiling.texture_data.scale_rotate =
-                Mat2f::rotation(0.01 * self.timer.frame_count as f32) * Mat2f::scale(Vec2f::uniform(5.0));
+            self.sectors[self.player.sector_index]
+                .floor
+                .texture_data
+                .scale_rotate = Mat2f::rotation(0.01 * self.timer.frame_count as f32)
+                * Mat2f::scale(Vec2f::uniform(5.0));
+            self.sectors[self.player.sector_index]
+                .ceiling
+                .texture_data
+                .scale_rotate = Mat2f::rotation(0.01 * self.timer.frame_count as f32)
+                * Mat2f::scale(Vec2f::uniform(5.0));
         } else if self.input.keyboard.is_key_held(KeyCode::ArrowRight) {
-            self.sectors[0].floor.texture_data.scale_rotate =
-                Mat2f::rotation(-0.01 * self.timer.frame_count as f32) * Mat2f::scale(Vec2f::uniform(5.0));
-            self.sectors[0].ceiling.texture_data.scale_rotate =
-                Mat2f::rotation(-0.01 * self.timer.frame_count as f32) * Mat2f::scale(Vec2f::uniform(5.0));
+            self.sectors[self.player.sector_index]
+                .floor
+                .texture_data
+                .scale_rotate = Mat2f::rotation(-0.01 * self.timer.frame_count as f32)
+                * Mat2f::scale(Vec2f::uniform(5.0));
+            self.sectors[self.player.sector_index]
+                .ceiling
+                .texture_data
+                .scale_rotate = Mat2f::rotation(-0.01 * self.timer.frame_count as f32)
+                * Mat2f::scale(Vec2f::uniform(5.0));
         }
 
         self.renderer
-            .update(&self.player, &self.textures, &self.sectors);
+            .update(&self.player, &self.textures, &self.sectors, &self.sprites);
         self.input.update();
     }
 
@@ -270,7 +457,7 @@ impl WindowApplication for App {
                     // Copy renderer framebuffer to window framebuffer
                     let mut ctx = self.window.graphics_context();
                     let buffer = ctx.framebuffer_mut();
-                    let pixels = self.renderer.framebuffer.pixels_as_u32();
+                    let pixels = self.renderer.framebuffer().pixels_as_u32();
                     buffer.copy_from_slice(pixels);
 
                     // Debug timings
@@ -326,9 +513,3 @@ impl WindowApplication for App {
         }
     }
 }
-
-
-
-
-
-

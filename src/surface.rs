@@ -53,6 +53,7 @@ impl Portal {
 
 #[derive(Debug)]
 pub struct Sector {
+    pub id: usize,
     pub walls: Vec<Wall>,
     pub floor: Plane,
     pub ceiling: Plane,
@@ -63,6 +64,7 @@ pub struct Wall {
     pub a: Vec2f,
     pub b: Vec2f,
     pub width: f32,
+    pub normal: Vec2f,
     pub texture_data: WallTexture,
     pub portal: Option<Portal>,
 }
@@ -72,6 +74,7 @@ impl Wall {
         Self {
             a,
             b,
+            normal: (b - a).normalise().perpendicular(),
             width: (b - a).magnitude(),
             texture_data,
             portal,
@@ -96,8 +99,20 @@ impl Plane {
 
 
 #[derive(Debug)]
-pub struct Sector {
-    pub walls: Vec<Wall>,
-    pub floor: Plane,
-    pub ceiling: Plane,
+pub struct Sprite {
+    pub position: Vec2f,
+    pub texture_data: WallTexture,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Sprite {
+    pub fn new(position: Vec2f, texture_data: WallTexture, width: f32, height: f32) -> Self {
+        Self {
+            position,
+            texture_data,
+            width,
+            height,
+        }
+    }
 }
