@@ -84,8 +84,10 @@ impl BGRA8 {
         }
     }
 
-    pub fn blend(self, other: Self, alpha: u8) -> Self {
-        let alpha = alpha as u16;
+    /// Blends two colours together using the alpha value of the first colour and 1.0 - alpha of the
+    /// second colour.
+    pub fn blend(self, other: Self) -> Self {
+        let alpha = self.a as u16;
         let beta = 255 - alpha;
 
         let r1 = self.r as u16 * alpha;
@@ -100,7 +102,21 @@ impl BGRA8 {
         let g = ((g1 + g2) >> 8) as u8;
         let b = ((b1 + b2) >> 8) as u8;
 
-        Self { r, g, b, a: self.a }
+        Self { b, g, r, a: 0xFF }
+    }
+
+    /// Multiplies the colour by the given lightness value 
+    pub fn lightness(self, l: u16) -> Self {
+        let r = (self.r as u16 * l) >> 8;
+        let g = (self.g as u16 * l) >> 8;
+        let b = (self.b as u16 * l) >> 8;
+
+        Self {
+            b: b as u8,
+            g: g as u8,
+            r: r as u8,
+            a: self.a,
+        }
     }
 
     pub fn as_u32(self) -> u32 {
