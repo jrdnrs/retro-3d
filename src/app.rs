@@ -25,7 +25,7 @@ use crate::{
 pub const DEFAULT_WIDTH: usize = 640;
 pub const DEFAULT_HEIGHT: usize = 400;
 pub const DEFAULT_FOV: f32 = 75.0;
-pub const DEFAULT_FPS: f32 = 120.0;
+pub const FPS: f32 = 120.0;
 
 pub const NEAR: f32 = 1.0;
 pub const FAR: f32 = 512.0;

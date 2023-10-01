@@ -3,12 +3,12 @@ use core::{
     ops::{Index, IndexMut},
 };
 
-pub struct StackVec<T, const N: usize> {
+pub struct FixedVec<T, const N: usize> {
     data: [MaybeUninit<T>; N],
     len: usize,
 }
 
-impl<T, const N: usize> StackVec<T, N> {
+impl<T, const N: usize> FixedVec<T, N> {
     pub fn new() -> Self {
         Self {
             data: unsafe { MaybeUninit::uninit().assume_init() },
@@ -71,12 +71,44 @@ impl<T, const N: usize> StackVec<T, N> {
         return Some(unsafe { self.data[index].assume_init_ref() });
     }
 
+    pub unsafe fn get_unchecked(&self, index: usize) -> &T {
+        self.data[index].assume_init_ref()
+    }
+
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         if index >= self.len {
             return None;
         }
 
         return Some(unsafe { self.data[index].assume_init_mut() });
+    }
+
+    pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut T {
+        self.data[index].assume_init_mut()
+    }
+
+    pub fn last(&self) -> Option<&T> {
+        if self.len == 0 {
+            return None;
+        }
+
+        return Some(unsafe { self.data[self.len - 1].assume_init_ref() });
+    }
+
+    pub unsafe fn last_unchecked(&self) -> &T {
+        self.data[self.len - 1].assume_init_ref()
+    }
+
+    pub fn last_mut(&mut self) -> Option<&mut T> {
+        if self.len == 0 {
+            return None;
+        }
+
+        return Some(unsafe { self.data[self.len - 1].assume_init_mut() });
+    }
+
+    pub unsafe fn last_unchecked_mut(&mut self) -> &mut T {
+        self.data[self.len - 1].assume_init_mut()
     }
 
     pub fn as_slice(&self) -> &[T] {
@@ -88,7 +120,7 @@ impl<T, const N: usize> StackVec<T, N> {
     }
 }
 
-impl<T, const N: usize> Index<usize> for StackVec<T, N> {
+impl<T, const N: usize> Index<usize> for FixedVec<T, N> {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -96,7 +128,7 @@ impl<T, const N: usize> Index<usize> for StackVec<T, N> {
     }
 }
 
-impl<T, const N: usize> IndexMut<usize> for StackVec<T, N> {
+impl<T, const N: usize> IndexMut<usize> for FixedVec<T, N> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.get_mut(index).unwrap()
     }

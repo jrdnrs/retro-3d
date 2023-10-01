@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::app::DEFAULT_FPS;
+use crate::app::FPS;
 
 #[derive(Debug)]
 pub struct Timer {
@@ -16,7 +16,7 @@ pub struct Timer {
 impl Timer {
     pub fn new() -> Self {
         let start = Instant::now();
-        let frame_time = Duration::from_secs_f32(1.0 / DEFAULT_FPS);
+        let frame_time = Duration::from_secs_f32(1.0 / FPS);
         let prev_update = start;
         let prev_frame = start;
         let frame_count = 0;
