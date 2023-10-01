@@ -25,6 +25,8 @@ pub const LEAF: usize = 10;
 pub const OBSIDIAN: usize = 11;
 pub const PORTAL: usize = 12;
 
+pub const GOBLIN: usize = 13;
+
 #[derive(Debug)]
 struct Bitmap {
     width: usize,
@@ -47,10 +49,23 @@ pub struct Texture {
 
 impl Texture {
     pub fn sample(&self, x: usize, y: usize, level: usize) -> BGRA8 {
+        debug_assert!(x < self.levels[level].width && y < self.levels[level].height);
+
         let local_offset = y * self.levels[level].width + x;
         let global_offset = self.levels[level].offset + local_offset;
 
         self.pixels[global_offset]
+    }
+
+    pub unsafe fn sample_unchecked(&self, x: usize, y: usize, level: usize) -> BGRA8 {
+        debug_assert!(x < self.levels[level].width && y < self.levels[level].height);
+
+        debug_assert!(level < MIP_LEVELS);
+        let local_offset = y * self.levels.get_unchecked(level).width + x;
+        let global_offset = self.levels.get_unchecked(level).offset + local_offset;
+
+        debug_assert!(global_offset < self.pixels.len());
+        *self.pixels.get_unchecked(global_offset)
     }
 
     fn from_bitmap(bitmap: Bitmap) -> Self {
@@ -129,19 +144,21 @@ impl Textures {
 
     pub fn load_default(&mut self) {
         let texture_files = [
-            "./assets/textures/placeholder.png",
-            "./assets/textures/brick.png",
-            "./assets/textures/rock.png",
-            "./assets/textures/stone.png",
-            "./assets/textures/stone_brick.png",
-            "./assets/textures/plank.png",
-            "./assets/textures/grass.png",
-            "./assets/textures/dirt.png",
-            "./assets/textures/sand.png",
-            "./assets/textures/concrete.png",
-            "./assets/textures/leaf.png",
-            "./assets/textures/obsidian.png",
-            "./assets/textures/portal.png",
+            "./assets/textures/tile/placeholder.png",
+            "./assets/textures/tile/brick.png",
+            "./assets/textures/tile/rock.png",
+            "./assets/textures/tile/stone.png",
+            "./assets/textures/tile/stone_brick.png",
+            "./assets/textures/tile/plank.png",
+            "./assets/textures/tile/grass.png",
+            "./assets/textures/tile/dirt.png",
+            "./assets/textures/tile/sand.png",
+            "./assets/textures/tile/concrete.png",
+            "./assets/textures/tile/leaf.png",
+            "./assets/textures/tile/obsidian.png",
+            "./assets/textures/tile/portal.png",
+
+            "./assets/textures/entity/goblin.png",
         ];
 
         for file in texture_files {
@@ -172,7 +189,7 @@ impl Textures {
 
         // Convert from RGBA to BGRA
         for pixel in buffer.chunks_exact_mut(4) {
-            pixel.swap(0,2);
+            pixel.swap(0, 2);
         }
 
         // match info.color_type {
@@ -274,18 +291,33 @@ fn downscale_3x3_box_filter(src: &[BGRA8], src_width: usize, src_height: usize, 
             let mut r = 0;
             let mut g = 0;
             let mut b = 0;
+            let mut a = 0;
+
+            let mut sample_count = 0;
 
             for sample in samples.iter() {
+                if sample.a == 0 {
+                    continue;
+                }
+
                 r += sample.r as u32;
                 g += sample.g as u32;
                 b += sample.b as u32;
+                a += sample.a as u32;
+
+                sample_count += 1;
             }
 
-            r /= 9;
-            g /= 9;
-            b /= 9;
+            if sample_count == 0 {
+                continue;
+            }
 
-            dst[dst_y * dst_width + dst_x] = BGRA8::new(r as u8, g as u8, b as u8, 0xFF)
+            r /= sample_count;
+            g /= sample_count;
+            b /= sample_count;
+            a /= sample_count;
+
+            dst[dst_y * dst_width + dst_x] = BGRA8::new(r as u8, g as u8, b as u8, a as u8);
         }
     }
 }
