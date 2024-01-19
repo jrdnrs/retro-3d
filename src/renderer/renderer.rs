@@ -1,12 +1,13 @@
 use maths::{geometry::Polygon, linear::Vec2f};
 
 use crate::{
-    app::{FAR, NEAR},
     camera::Camera,
     colour::BGRA8,
+    consts::NEAR,
+    font::{AlignHeight, AlignWidth, Font},
     player::Player,
     surface::{Sector, Sprite},
-    textures::Textures,
+    textures::Texture,
 };
 
 use super::{
@@ -14,6 +15,7 @@ use super::{
     portal::{PortalNode, PortalTree},
     sector::SectorRenderer,
     sprite::SpriteRenderer,
+    text::TextRenderer,
     util::{focal_dimensions, view_frustum},
 };
 
@@ -132,7 +134,7 @@ impl RendererState {
         let inv_z = 1.0 / z;
 
         // construct pseudo vertical camera space coordinate
-        let y = self.camera.height_offset - height_offset;
+        let y = self.camera.z - height_offset;
 
         // perspective projection into screen space
         let mut screen_space_x = (point.x * self.focal_width) * inv_z;
@@ -182,6 +184,7 @@ pub struct Renderer {
     portal_tree: PortalTree,
     sector_renderer: SectorRenderer,
     sprite_renderer: SpriteRenderer,
+    text_renderer: TextRenderer,
 }
 
 impl Renderer {
@@ -190,12 +193,14 @@ impl Renderer {
         let portal_tree = PortalTree::with_depth(4, screen_width, screen_height);
         let sector_renderer = SectorRenderer::new(&state);
         let sprite_renderer = SpriteRenderer::new(&state);
+        let text_renderer = TextRenderer::new(&state);
 
         Self {
             state,
             portal_tree,
             sector_renderer,
             sprite_renderer,
+            text_renderer,
         }
     }
 
@@ -236,7 +241,7 @@ impl Renderer {
     pub fn update(
         &mut self,
         player: &Player,
-        textures: &Textures,
+        textures: &[Texture],
         sectors: &[Sector],
         sprites: &[Sprite],
     ) {
@@ -271,7 +276,6 @@ impl Renderer {
             portal_index += 1;
         }
 
-
         for sprite in sprites {
             self.sprite_renderer.draw_sprite(
                 &mut self.state,
@@ -284,6 +288,22 @@ impl Renderer {
         if self.state.debug {
             self.debug_draw_portals();
         }
+    }
+
+    pub fn draw_text(
+        &mut self,
+        font: &Font,
+        colour: BGRA8,
+        align: (AlignWidth, AlignHeight),
+        x: f32,
+        y: f32,
+        text: &str,
+    ) {
+        let x = (self.state.framebuffer.width() as f32 * x) as usize;
+        let y = (self.state.framebuffer.height() as f32 * y) as usize;
+
+        self.text_renderer
+            .render(&mut self.state, font, colour, align, x, y, text)
     }
 
     fn debug_draw_portals(&mut self) {

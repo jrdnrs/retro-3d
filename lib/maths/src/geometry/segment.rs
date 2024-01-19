@@ -161,7 +161,11 @@ impl Segment {
         let ab = self.b - self.a;
         let ap = point - self.a;
 
-        let t = ap.dot(ab) / ab.dot(ab);
+        let displacement_proj = ap.dot(ab);
+        let ab_sq = ab.dot(ab);
+        
+        assert!(ab_sq > 0.0, "Segment length is zero");
+        let t = displacement_proj / ab_sq;
 
         if t >= 0.0 && t <= 1.0 {
             let projection = self.a + ab * t;

@@ -1,7 +1,7 @@
-use super::{Segment, Shape};
+use crate::linear::Vec2f;
 
-pub fn overlaps(shape_a: &impl Shape, shape_b: &impl Shape) -> bool {
-    let mut points = [shape_a.points(), shape_b.points()];
+pub fn separating_axis_test(points_a: &[Vec2f], points_b: &[Vec2f]) -> bool {
+    let mut points = [points_a, points_b];
 
     // Run through twice, first with shape A as the reference and then with shape B
     for _ in 0..2 {
@@ -12,9 +12,7 @@ pub fn overlaps(shape_a: &impl Shape, shape_b: &impl Shape) -> bool {
         for i in 0..points_a.len() {
             let j = (i + 1) % points_a.len();
 
-            let normal = Segment::new(points_a[i], points_a[j])
-                .direction()
-                .perpendicular();
+            let normal = (points_a[j] - points_a[i]).perpendicular();
 
             let mut min_a = f32::MAX;
             let mut max_a = f32::MIN;
@@ -46,7 +44,10 @@ pub fn overlaps(shape_a: &impl Shape, shape_b: &impl Shape) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{geometry::Triangle, linear::Vec2f};
+    use crate::{
+        geometry::{Shape, Triangle, Segment},
+        linear::Vec2f,
+    };
 
     use super::*;
 
@@ -60,10 +61,10 @@ mod tests {
 
         // intersects
         let segment = Segment::new(Vec2f::new(0.2, 0.2), Vec2f::new(2.0, 2.0));
-        assert!(overlaps(&triangle, &segment));
+        assert!(separating_axis_test(&triangle.points(), &segment.points()));
 
         // does not intersect
         let segment = Segment::new(Vec2f::new(2.0, 2.0), Vec2f::new(4.0, 4.0));
-        assert!(!overlaps(&triangle, &segment));
+        assert!(!separating_axis_test(&triangle.points(), &segment.points()));
     }
 }

@@ -1,9 +1,9 @@
 use maths::{geometry::Segment, linear::Vec2f};
 
 use crate::{
-    app::NEAR,
+    consts::{MIP_SCALES, NEAR},
     surface::{Sector, Wall},
-    textures::{Texture, Textures, MIP_SCALES},
+    textures::Texture,
 };
 
 use super::{
@@ -44,7 +44,7 @@ impl WallRenderer {
         state: &mut RendererState,
         portals: &mut PortalTree,
         sectors: &[Sector],
-        textures: &Textures,
+        textures: &[Texture],
         portal_index: usize,
         wall: &Wall,
     ) {
@@ -89,8 +89,8 @@ impl WallRenderer {
         texture: &Texture,
     ) {
         // Transform coordinates based on camera position and orientation
-        let mut vs_a = state.transform_view(wall.a);
-        let mut vs_b = state.transform_view(wall.b);
+        let mut vs_a = state.transform_view(wall.segment.a);
+        let mut vs_b = state.transform_view(wall.segment.b);
 
         // Frustum culling
         if !Segment::new(vs_a, vs_b).overlaps_polygon(&state.frustum) {
@@ -161,11 +161,18 @@ impl WallRenderer {
             inv_x_delta,
         );
 
-        // TODO: If we are to use this for clipping, we need to actually interpolate these endpoints, according
-        // to where they were clipped, and use that distance
-        let dist_a = vs_a.magnitude_sq();
-        let dist_b = vs_b.magnitude_sq();
-        let max_depth = dist_a.max(dist_b);
+        
+        let depth_a = vs_a.magnitude_sq();
+        let depth_b = vs_b.magnitude_sq();
+        let depth_gradient = (depth_b - depth_a) * inv_x_delta;
+
+        let x_min_offset = x_min as f32 - top_a.0.x;
+        let x_max_offset = top_a.0.x - x_max as f32;
+
+        let depth_a = depth_a + depth_gradient * x_min_offset;
+        let depth_b = depth_b + depth_gradient * x_max_offset;
+
+        let max_depth = depth_a.max(depth_b);
         portal.depth_max = portal.depth_max.max(max_depth);
 
         // HACK: This should not live here, but exists for testing if it's worth using angle-based lighting
@@ -191,8 +198,8 @@ impl WallRenderer {
         let portal = unsafe { portals.get_node_mut_unchecked(portal_index) };
 
         // Transform coordinates based on camera position and orientation
-        let mut vs_a = state.transform_view(wall.a);
-        let mut vs_b = state.transform_view(wall.b);
+        let mut vs_a = state.transform_view(wall.segment.a);
+        let mut vs_b = state.transform_view(wall.segment.b);
 
         // Frustum culling
         if !Segment::new(vs_a, vs_b).overlaps_polygon(&state.frustum) {
@@ -293,11 +300,18 @@ impl WallRenderer {
             inv_x_delta,
         );
 
-        // TODO: If we are to use this for clipping, we need to actually interpolate these endpoints, according
-        // to where they were clipped, and use that distance
-        let dist_a = vs_a.magnitude_sq();
-        let dist_b = vs_b.magnitude_sq();
-        let max_depth = dist_a.max(dist_b);
+        let depth_a = vs_a.magnitude_sq();
+        let depth_b = vs_b.magnitude_sq();
+        let depth_gradient = (depth_b - depth_a) * inv_x_delta;
+
+        let x_min_offset = x_min as f32 - top_a.0.x;
+        let x_max_offset = top_a.0.x - x_max as f32;
+
+        let depth_a = depth_a + depth_gradient * x_min_offset;
+        let depth_b = depth_b + depth_gradient * x_max_offset;
+
+        let min_depth = depth_a.min(depth_b);
+        let max_depth = depth_a.max(depth_b);
         portal.depth_max = portal.depth_max.max(max_depth);
 
         let current_tree_depth = portal.tree_depth;
@@ -306,7 +320,7 @@ impl WallRenderer {
             sector_index: next_sector.id,
             x_min,
             x_max,
-            depth_min: max_depth,
+            depth_min: min_depth,
             depth_max: max_depth,
         });
 
@@ -453,7 +467,7 @@ impl WallRenderer {
         let mip_scale = MIP_SCALES[mip_level];
 
         let lighting = unsafe {
-            (diminish_lighting(normal_depth) * lighting * 255.0).to_int_unchecked::<u16>()
+            (diminish_lighting(normal_depth) * lighting * 255.0).to_int_unchecked::<u8>()
         };
 
         // Recover U texture coordinate after interpolating in depth space
@@ -471,7 +485,7 @@ impl WallRenderer {
             unsafe {
                 let colour = texture
                     .sample_unchecked(texture_x, texture_y, mip_level)
-                    .lightness(lighting);
+                    .darken(lighting);
                 state.framebuffer.set_pixel_unchecked(x, y, colour);
             }
 
@@ -536,7 +550,7 @@ impl WallInterpolator {
 
         // If the wall has been clipped to the near plane, it is important to start with the vertex that was
         // not clipped as, in cases where the near Z is a very small number, the X offset can be extremely
-        // large and cause precision issues when interpolating towards the clipped vertex.
+        // large and cause precision issues when interpolating towards the non-clipped vertex.
         if inv_depth_a < inv_depth_b {
             let x_clamp_offset = x_min - top_a.x;
 

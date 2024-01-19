@@ -2,10 +2,9 @@ use std::time::{Duration, Instant};
 
 use input::Input;
 use maths::{
-    geometry::{Segment, AABB},
+    geometry::Segment,
     linear::{Mat2f, Vec2f},
 };
-use physics::collider::Collider;
 use window::{
     application::WindowApplication,
     event::{Event, KeyCode, MouseButton, RenderEvent, WindowEvent},
@@ -15,21 +14,15 @@ use window::{
 use windows_sys::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 
 use crate::{
+    colour::BGRA8,
+    consts::*,
+    font::{AlignHeight, AlignWidth, Font},
     player::Player,
     renderer::Renderer,
     surface::{Plane, PlaneTexture, Portal, Sector, Sprite, Wall, WallTexture},
-    textures::{self, Textures},
+    textures::Texture,
     timer::Timer,
 };
-
-pub const INTERNAL_WIDTH: usize = 640;
-pub const INTERNAL_HEIGHT: usize = 400;
-pub const HFOV: f32 = 75.0;
-pub const FPS: f32 = 120.0;
-
-pub const NEAR: f32 = 0.00001;
-pub const FAR: f32 = 512.0;
-pub const MAP_DEPTH_RANGE: f32 = 1.0 / (FAR - NEAR);
 
 pub struct App {
     window: Window,
@@ -37,8 +30,9 @@ pub struct App {
     timer: Timer,
     renderer: Renderer,
 
-    textures: Textures,
     player: Player,
+    textures: Vec<Texture>,
+    fonts: Vec<Font>,
     sectors: Vec<Sector>,
     sprites: Vec<Sprite>,
 }
@@ -57,12 +51,9 @@ impl App {
         let timer = Timer::new();
         let renderer = Renderer::new(INTERNAL_WIDTH, INTERNAL_HEIGHT, HFOV);
 
-        let textures = Textures::new();
-        let player = Player::new(
-            Vec2f::ZERO,
-            15.0,
-            Collider::new_aabb(AABB::from_dimensions(Vec2f::ZERO, Vec2f::new(10.0, 10.0))),
-        );
+        let textures = Vec::new();
+        let fonts = Vec::new();
+        let player = Player::new(Vec2f::ZERO, 15.0, 0);
 
         App {
             window,
@@ -70,8 +61,9 @@ impl App {
             timer,
             renderer,
 
-            textures,
             player,
+            textures,
+            fonts,
             sectors: Vec::new(),
             sprites: Vec::new(),
         }
@@ -84,25 +76,33 @@ impl App {
             timeBeginPeriod(1)
         };
 
+        // Load default assets
+        for path in TEXTURE_TILE_PATHS {
+            self.textures.push(Texture::from_path_png(path).unwrap());
+        }
+        for path in TEXTURE_SPRITE_PATHS {
+            self.textures.push(Texture::from_path_png(path).unwrap());
+        }
+        for (path, size) in FONT_PATHS.iter().zip(FONT_SIZES.iter()) {
+            self.fonts
+                .push(Font::from_path_png(path, size.0, size.1, 1).unwrap());
+        }
+
         // Enable debug drawing
         self.renderer.state_mut().debug = true;
-
-        self.textures.load_default();
 
         // Place player in sector 0
         self.player.camera.position = Vec2f::new(105.0, 180.0);
 
         // Point player towards sector 1
         self.player.camera.yaw = core::f32::consts::PI;
-        self.player.camera.update(Vec2f::ZERO, Vec2f::ZERO);
+        self.player.camera.translate(Vec2f::ZERO);
+        self.player.camera.rotate(Vec2f::ZERO);
 
-        let x5_scale = Mat2f::rotation(1.1) * Mat2f::scale(Vec2f::uniform(5.0));
-
-        let stone_brick_wall =
-            WallTexture::new(textures::STONE_BRICK, Vec2f::ZERO, Vec2f::uniform(5.0));
-        let grass_floor = PlaneTexture::new(textures::GRASS, Vec2f::ZERO, Vec2f::uniform(5.0), 0.0);
-        let wood_ceiling =
-            PlaneTexture::new(textures::PLANK, Vec2f::ZERO, Vec2f::uniform(5.0), 0.0);
+        let stone_brick_wall = WallTexture::new(STONE_BRICK, Vec2f::ZERO, Vec2f::uniform(5.0));
+        let leaf_wall = WallTexture::new(LEAF, Vec2f::ZERO, Vec2f::uniform(5.0));
+        let grass_floor = PlaneTexture::new(GRASS, Vec2f::ZERO, Vec2f::uniform(5.0), 0.0);
+        let wood_ceiling = PlaneTexture::new(PLANK, Vec2f::ZERO, Vec2f::uniform(5.0), 0.0);
 
         self.sectors = vec![
             Sector {
@@ -246,7 +246,7 @@ impl App {
                     Wall::new(
                         Vec2f::new(150.0, 30.0),
                         Vec2f::new(100.0, 30.0),
-                        stone_brick_wall,
+                        leaf_wall,
                         None,
                     ),
                     Wall::new(
@@ -301,19 +301,19 @@ impl App {
         self.sprites = vec![
             Sprite::new(
                 Vec2f::new(140.0, 80.0),
-                WallTexture::new(textures::GOBLIN, Vec2f::ZERO, Vec2f::uniform(8.0)),
+                WallTexture::new(GOBLIN, Vec2f::ZERO, Vec2f::uniform(8.0)),
                 15.0,
                 15.0,
             ),
             Sprite::new(
                 Vec2f::new(80.0, 80.0),
-                WallTexture::new(textures::GOBLIN, Vec2f::ZERO, Vec2f::uniform(8.0)),
+                WallTexture::new(GOBLIN, Vec2f::ZERO, Vec2f::uniform(8.0)),
                 15.0,
                 15.0,
             ),
             // Sprite::new(
             //     Vec2f::new(124.0, 143.0),
-            //     WallTexture::new(textures::PORTAL, Vec2f::ZERO, Vec2f::uniform(5.0)),
+            //     WallTexture::new(PORTAL, Vec2f::ZERO, Vec2f::uniform(5.0)),
             //     20.0,
             //     15.0,
             // ),
@@ -323,18 +323,52 @@ impl App {
     pub fn update(&mut self) {
         let delta_seconds = self.timer.delta_seconds();
 
-        self.player.update(delta_seconds, &self.input);
+        self.player.update_movement(delta_seconds, &self.input);
 
         // Update current sector
         let displacement_segment =
             Segment::new(self.player.camera.position, self.player.prev_position);
         for wall in self.sectors[self.player.sector_index].walls.iter() {
             if let Some(portal) = wall.portal {
-                let wall_segment = Segment::new(wall.a, wall.b);
+                let wall_segment = Segment::new(wall.segment.a, wall.segment.b);
                 if displacement_segment.intersects(&wall_segment) {
+                    // Adjust z position for new sector
+                    let z_delta = self.sectors[portal.sector].floor.height
+                        - self.sectors[self.player.sector_index].floor.height;
+
+                    self.player.camera.z += z_delta;
+                    self.player.head_z += z_delta;
+                    self.player.knee_z += z_delta;
+
                     self.player.sector_index = portal.sector;
+
                     break;
                 }
+            }
+        }
+
+        // Wall collision
+        for wall in self.sectors[self.player.sector_index].walls.iter() {
+            let distance_sq = wall.segment.point_distance_sq(self.player.camera.position);
+
+            if distance_sq <= self.player.collider.radius * self.player.collider.radius {
+                if let Some(portal) = wall.portal {
+                    let next_sector_floor_z = self.sectors[portal.sector].floor.height;
+                    let next_sector_ceiling_z = self.sectors[portal.sector].ceiling.height;
+
+                    // If player fits through portal, don't collide
+                    if self.player.head_z < next_sector_ceiling_z
+                        && self.player.knee_z > next_sector_floor_z
+                    {
+                        continue;
+                    }
+                }
+
+                let depth = self.player.collider.radius - distance_sq.sqrt();
+                let correction = wall.normal * depth;
+                self.player.translate(-correction);
+
+                self.player.velocity -= wall.normal * wall.normal.dot(self.player.velocity) * 0.5;
             }
         }
 
@@ -427,6 +461,31 @@ impl App {
         self.renderer
             .update(&self.player, &self.textures, &self.sectors, &self.sprites);
         self.input.update();
+
+        // Draw debug text
+        self.renderer.draw_text(
+            &self.fonts[0],
+            BGRA8::ORANGE,
+            (AlignWidth::Left, AlignHeight::Top),
+            0.01,
+            0.01,
+            &format!(
+                "Sector:   {:>3}
+Position: {:>6.2} {:>6.2} {:>6.2}
+Rotation: {:>6.2} {:>6.2}
+Velocity: {:>6.2} {:>6.2}
+Speed:    {:>6.2}",
+                self.player.sector_index,
+                self.player.camera.position.x,
+                self.player.camera.position.y,
+                self.player.camera.z,
+                self.player.camera.yaw,
+                self.player.camera.pitch,
+                self.player.velocity.x,
+                self.player.velocity.y,
+                self.player.velocity.magnitude()
+            ),
+        );
     }
 
     pub fn run(mut self) -> ! {
@@ -458,7 +517,13 @@ impl WindowApplication for App {
                     let mut ctx = self.window.graphics_context();
                     let buffer = ctx.framebuffer_mut();
                     let pixels = self.renderer.framebuffer().pixels_as_u32();
-                    buffer.copy_from_slice(pixels);
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            pixels.as_ptr(),
+                            buffer.as_mut_ptr(),
+                            pixels.len(),
+                        );
+                    }
 
                     // Debug timings
                     let update_time_elapsed = Instant::now() - self.timer.prev_update;

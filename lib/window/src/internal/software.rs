@@ -1,6 +1,6 @@
 use core::num::NonZeroU32;
 
-use crate::{WindowSize, WindowPosition};
+use crate::{WindowPosition, WindowSize};
 
 pub struct GraphicsContext<'a> {
     framebuffer: softbuffer::Buffer<'a>,
@@ -89,7 +89,8 @@ impl SoftWindow {
     }
 
     pub fn set_position(&self, position: WindowPosition) {
-        self.winit_window.set_outer_position(winit::dpi::PhysicalPosition::from(position));
+        self.winit_window
+            .set_outer_position(winit::dpi::PhysicalPosition::from(position));
     }
 
     pub fn set_resizable(&self, resizable: bool) {
@@ -130,7 +131,8 @@ impl SoftWindow {
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
         if fullscreen {
-            self.winit_window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+            self.winit_window
+                .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         } else {
             self.winit_window.set_fullscreen(None);
         }

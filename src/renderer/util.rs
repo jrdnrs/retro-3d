@@ -1,9 +1,6 @@
 use maths::{geometry::Polygon, linear::Vec2f};
 
-use crate::{
-    app::{FAR, MAP_DEPTH_RANGE, NEAR},
-    textures::{MIP_FACTOR, MIP_LEVELS},
-};
+use crate::consts::{FAR, MAP_DEPTH_RANGE, MIP_FACTOR, MIP_LEVELS, NEAR};
 
 /// Map a linear depth value, ranging from [NEAR] to [FAR], to a normalised depth value, ranging from 0.0 to 1.0.
 pub fn normalise_depth(depth: f32) -> f32 {

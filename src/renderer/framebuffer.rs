@@ -114,6 +114,66 @@ impl Framebuffer {
         *self.pixels.get_unchecked_mut(index) = blended;
     }
 
+    pub fn draw_h_line(&mut self, x: usize, y: usize, length: usize, colour: BGRA8) {
+        debug_assert!(x < self.width && y < self.height);
+        debug_assert!(x + length <= self.width);
+
+        let start = (y * self.width) + x;
+        let end = start + length;
+
+        for i in start..end {
+            self.pixels[i] = colour;
+        }
+    }
+
+    pub unsafe fn draw_h_line_unchecked(
+        &mut self,
+        x: usize,
+        y: usize,
+        length: usize,
+        colour: BGRA8,
+    ) {
+        debug_assert!(x <= self.width && y < self.height);
+        debug_assert!(x + length <= self.width);
+
+        let start = (y * self.width) + x;
+        let end = start + length;
+
+        for i in start..end {
+            *self.pixels.get_unchecked_mut(i) = colour;
+        }
+    }
+
+    pub fn draw_v_line(&mut self, x: usize, y: usize, length: usize, colour: BGRA8) {
+        debug_assert!(x < self.width && y <= self.height);
+        debug_assert!(y + length <= self.height);
+
+        let start = (y * self.width) + x;
+        let end = start + (length * self.width);
+
+        for i in (start..end).step_by(self.width) {
+            self.pixels[i] = colour;
+        }
+    }
+
+    pub unsafe fn draw_v_line_unchecked(
+        &mut self,
+        x: usize,
+        y: usize,
+        length: usize,
+        colour: BGRA8,
+    ) {
+        debug_assert!(x < self.width && y < self.height);
+        debug_assert!(y + length <= self.height);
+
+        let start = (y * self.width) + x;
+        let end = start + (length * self.width);
+
+        for i in (start..end).step_by(self.width) {
+            *self.pixels.get_unchecked_mut(i) = colour;
+        }
+    }
+
     /// # Deprecated
     pub fn draw_line(&mut self, mut start: Vec2f, mut end: Vec2f, colour: BGRA8) {
         start.x = start.x.clamp(0.0, (self.width - 1) as f32);

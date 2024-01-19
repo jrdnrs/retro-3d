@@ -1,4 +1,4 @@
-use maths::linear::{Mat2f, Vec2f};
+use maths::{linear::{Mat2f, Vec2f}, geometry::Segment};
 
 #[derive(Clone, Copy, Debug)]
 pub struct WallTexture {
@@ -61,8 +61,7 @@ pub struct Sector {
 
 #[derive(Debug)]
 pub struct Wall {
-    pub a: Vec2f,
-    pub b: Vec2f,
+    pub segment: Segment,
     pub width: f32,
     pub normal: Vec2f,
     pub texture_data: WallTexture,
@@ -72,8 +71,7 @@ pub struct Wall {
 impl Wall {
     pub fn new(a: Vec2f, b: Vec2f, texture_data: WallTexture, portal: Option<Portal>) -> Self {
         Self {
-            a,
-            b,
+            segment: Segment::new(a, b),
             normal: (b - a).normalise().perpendicular(),
             width: (b - a).magnitude(),
             texture_data,

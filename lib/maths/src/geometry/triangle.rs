@@ -14,7 +14,7 @@ impl Triangle {
         Self { a, b, c }
     }
 
-    pub fn barycentric_with_inv_area(&self, point: Vec2f, inv_area: f32) -> Vec3f {
+    pub fn barycentric_from_inv_area(&self, point: Vec2f, inv_area: f32) -> Vec3f {
         let area_bcp = Triangle::new(self.b, self.c, point).area();
         let area_acp = Triangle::new(self.a, self.c, point).area();
         let area_abp = Triangle::new(self.a, self.b, point).area();
@@ -30,7 +30,7 @@ impl Triangle {
         let area = self.area();
         let inv_area = 1.0 / area;
 
-        return self.barycentric_with_inv_area(point, inv_area);
+        return self.barycentric_from_inv_area(point, inv_area);
     }
 }
 

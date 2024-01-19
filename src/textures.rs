@@ -1,38 +1,6 @@
-use std::{fs::File, path::Path};
+use std::path::Path;
 
-use crate::colour::BGRA8;
-
-/// The number of mip levels to generate for each texture, where level 0 is the original size and
-/// subsequent levels are half the size of the previous level
-pub const MIP_LEVELS: usize = 4;
-/// Arbitrary factor to scale the mip level distance thresholds by. A higher value will result in
-/// more mip levels being used for a given distance
-pub const MIP_FACTOR: f32 = 4.0;
-/// As subsequent mip maps are smaller resolutions, we use this to scale texture coordinates
-pub const MIP_SCALES: [f32; MIP_LEVELS] = [1.0 / 1.0, 1.0 / 2.0, 1.0 / 4.0, 1.0 / 8.0];
-
-pub const PLACEHOLDER: usize = 0;
-pub const BRICK: usize = 1;
-pub const ROCK: usize = 2;
-pub const STONE: usize = 3;
-pub const STONE_BRICK: usize = 4;
-pub const PLANK: usize = 5;
-pub const GRASS: usize = 6;
-pub const DIRT: usize = 7;
-pub const SAND: usize = 8;
-pub const CONCRETE: usize = 9;
-pub const LEAF: usize = 10;
-pub const OBSIDIAN: usize = 11;
-pub const PORTAL: usize = 12;
-
-pub const GOBLIN: usize = 13;
-
-#[derive(Debug)]
-struct Bitmap {
-    width: usize,
-    height: usize,
-    pixels: Vec<u8>,
-}
+use crate::{bitmap::Bitmap, colour::BGRA8, consts::MIP_LEVELS};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MipLevel {
@@ -48,24 +16,9 @@ pub struct Texture {
 }
 
 impl Texture {
-    pub fn sample(&self, x: usize, y: usize, level: usize) -> BGRA8 {
-        debug_assert!(x < self.levels[level].width && y < self.levels[level].height);
-
-        let local_offset = y * self.levels[level].width + x;
-        let global_offset = self.levels[level].offset + local_offset;
-
-        self.pixels[global_offset]
-    }
-
-    pub unsafe fn sample_unchecked(&self, x: usize, y: usize, level: usize) -> BGRA8 {
-        debug_assert!(x < self.levels[level].width && y < self.levels[level].height);
-
-        debug_assert!(level < MIP_LEVELS);
-        let local_offset = y * self.levels.get_unchecked(level).width + x;
-        let global_offset = self.levels.get_unchecked(level).offset + local_offset;
-
-        debug_assert!(global_offset < self.pixels.len());
-        *self.pixels.get_unchecked(global_offset)
+    pub fn from_path_png(path: impl AsRef<Path>) -> Result<Self, &'static str> {
+        let bitmap = Bitmap::from_path_png(path)?;
+        Ok(Self::from_bitmap(bitmap))
     }
 
     fn from_bitmap(bitmap: Bitmap) -> Self {
@@ -76,13 +29,7 @@ impl Texture {
         let mut pixels = vec![BGRA8::default(); buffer_size];
 
         // Copy the pixels from the bitmap into the first level of the texture
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                bitmap.pixels.as_ptr(),
-                pixels.as_mut_ptr() as *mut u8,
-                bitmap.pixels.len(),
-            );
-        }
+        pixels[..bitmap.pixels().len()].copy_from_slice(bitmap.pixels());
 
         Self::generate_mip_maps(&levels, &mut pixels);
 
@@ -90,8 +37,8 @@ impl Texture {
     }
 
     fn calculate_mip_levels(bitmap: &Bitmap) -> [MipLevel; MIP_LEVELS] {
-        let mut mip_width = bitmap.width;
-        let mut mip_height = bitmap.height;
+        let mut mip_width = bitmap.width();
+        let mut mip_height = bitmap.height();
         let mut offset = 0;
 
         core::array::from_fn(|_| {
@@ -124,121 +71,38 @@ impl Texture {
             downscale_3x3_box_filter(src, src_width, src_height, dst);
         }
     }
-}
 
-#[derive(Debug)]
-pub struct Textures {
-    textures: Vec<Texture>,
-}
+    pub fn sample(&self, x: usize, y: usize, level: usize) -> BGRA8 {
+        debug_assert!(x < self.levels[level].width && y < self.levels[level].height);
 
-impl Textures {
-    pub fn new() -> Self {
-        Self {
-            textures: Vec::new(),
-        }
+        let local_offset = y * self.levels[level].width + x;
+        let global_offset = self.levels[level].offset + local_offset;
+
+        self.pixels[global_offset]
     }
 
-    pub fn get(&self, index: usize) -> Option<&Texture> {
-        self.textures.get(index)
-    }
+    pub unsafe fn sample_unchecked(&self, x: usize, y: usize, level: usize) -> BGRA8 {
+        debug_assert!(x < self.levels[level].width && y < self.levels[level].height);
 
-    pub fn load_default(&mut self) {
-        let texture_files = [
-            "./assets/textures/tile/placeholder.png",
-            "./assets/textures/tile/brick.png",
-            "./assets/textures/tile/rock.png",
-            "./assets/textures/tile/stone.png",
-            "./assets/textures/tile/stone_brick.png",
-            "./assets/textures/tile/plank.png",
-            "./assets/textures/tile/grass.png",
-            "./assets/textures/tile/dirt.png",
-            "./assets/textures/tile/sand.png",
-            "./assets/textures/tile/concrete.png",
-            "./assets/textures/tile/leaf.png",
-            "./assets/textures/tile/obsidian.png",
-            "./assets/textures/tile/portal.png",
+        debug_assert!(level < MIP_LEVELS);
+        let local_offset = y * self.levels.get_unchecked(level).width + x;
+        let global_offset = self.levels.get_unchecked(level).offset + local_offset;
 
-            "./assets/textures/entity/goblin.png",
-        ];
-
-        for file in texture_files {
-            self.load_png(file).unwrap();
-        }
-    }
-
-    fn load_png(&mut self, path: impl AsRef<Path>) -> Result<usize, &'static str> {
-        let mut decoder = png::Decoder::new(File::open(path).map_err(|_| "Failed to open file")?);
-        decoder.set_transformations(png::Transformations::ALPHA | png::Transformations::STRIP_16);
-        let mut reader = decoder.read_info().map_err(|_| "Failed to read info")?;
-        let mut buffer = vec![0; reader.output_buffer_size()];
-        let info = reader
-            .next_frame(&mut buffer)
-            .map_err(|_| "Failed to read frame")?;
-
-        assert_eq!(
-            info.bit_depth,
-            png::BitDepth::Eight,
-            "Unsupported bit depth"
-        );
-
-        assert_eq!(
-            info.color_type,
-            png::ColorType::Rgba,
-            "Unsupported colour type"
-        );
-
-        // Convert from RGBA to BGRA
-        for pixel in buffer.chunks_exact_mut(4) {
-            pixel.swap(0, 2);
-        }
-
-        // match info.color_type {
-        //     png::ColorType::Rgba => {
-        //         // Strip alpha channel
-        //         let mut i = 0;
-        //         let mut j = 0;
-
-        //         while i < buffer.len() {
-        //             buffer[j] = buffer[i];
-        //             buffer[j + 1] = buffer[i + 1];
-        //             buffer[j + 2] = buffer[i + 2];
-
-        //             i += 4;
-        //             j += 3;
-        //         }
-
-        //         buffer.resize(j, 0);
-        //     }
-
-        //     png::ColorType::Rgb => {}
-
-        //     _ => return Err("Unsupported colour type"),
-        // }
-
-        let bitmap = Bitmap {
-            width: info.width as usize,
-            height: info.height as usize,
-            pixels: buffer,
-        };
-
-        let texture = Texture::from_bitmap(bitmap);
-
-        self.textures.push(texture);
-
-        Ok(self.textures.len() - 1)
+        debug_assert!(global_offset < self.pixels.len());
+        *self.pixels.get_unchecked(global_offset)
     }
 }
 
-fn sample_clamp(src: &[BGRA8], src_width: usize, src_height: usize, x: usize, y: usize) -> BGRA8 {
-    let x = x.min(src_width - 1);
-    let y = y.min(src_height - 1);
+fn sample_clamp(src: &[BGRA8], src_width: usize, src_height: usize, x: isize, y: isize) -> BGRA8 {
+    let x = x.clamp(0, src_width as isize - 1) as usize;
+    let y = y.clamp(0, src_height as isize - 1) as usize;
 
     src[y * src_width + x]
 }
 
-fn sample_wrap(src: &[BGRA8], src_width: usize, src_height: usize, x: usize, y: usize) -> BGRA8 {
-    let x = x % src_width;
-    let y = y % src_height;
+fn sample_wrap(src: &[BGRA8], src_width: usize, src_height: usize, x: isize, y: isize) -> BGRA8 {
+    let x = x.rem_euclid(src_width as isize) as usize;
+    let y = y.rem_euclid(src_height as isize) as usize;
 
     src[y * src_width + x]
 }
@@ -251,41 +115,23 @@ fn downscale_3x3_box_filter(src: &[BGRA8], src_width: usize, src_height: usize, 
 
     for dst_y in 0..dst_height {
         for dst_x in 0..dst_width {
-            let src_x = dst_x * 2;
-            let src_y = dst_y * 2;
+            let src_x = (dst_x * 2) as isize;
+            let src_y = (dst_y * 2) as isize;
 
             // [a, b, c
             //  d, e, f
             //  g, h, i]
 
             let samples = [
-                sample_clamp(
-                    src,
-                    src_width,
-                    src_height,
-                    src_x.saturating_sub(1),
-                    src_y.saturating_sub(1),
-                ),
-                sample_clamp(src, src_width, src_height, src_x, src_y.saturating_sub(1)),
-                sample_clamp(
-                    src,
-                    src_width,
-                    src_height,
-                    src_x + 1,
-                    src_y.saturating_sub(1),
-                ),
-                sample_clamp(src, src_width, src_height, src_x.saturating_sub(1), src_y),
-                sample_clamp(src, src_width, src_height, src_x, src_y),
-                sample_clamp(src, src_width, src_height, src_x + 1, src_y),
-                sample_clamp(
-                    src,
-                    src_width,
-                    src_height,
-                    src_x.saturating_sub(1),
-                    src_y + 1,
-                ),
-                sample_clamp(src, src_width, src_height, src_x, src_y + 1),
-                sample_clamp(src, src_width, src_height, src_x + 1, src_y + 1),
+                sample_wrap(src, src_width, src_height, src_x - 1, src_y - 1),
+                sample_wrap(src, src_width, src_height, src_x, src_y - 1),
+                sample_wrap(src, src_width, src_height, src_x + 1, src_y - 1),
+                sample_wrap(src, src_width, src_height, src_x - 1, src_y),
+                sample_wrap(src, src_width, src_height, src_x, src_y),
+                sample_wrap(src, src_width, src_height, src_x + 1, src_y),
+                sample_wrap(src, src_width, src_height, src_x - 1, src_y + 1),
+                sample_wrap(src, src_width, src_height, src_x, src_y + 1),
+                sample_wrap(src, src_width, src_height, src_x + 1, src_y + 1),
             ];
 
             let mut r = 0;

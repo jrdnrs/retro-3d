@@ -6,7 +6,7 @@ pub trait Shape: Sized {
     fn contains_point(&self, point: Vec2f) -> bool;
     fn intersects_ray(&self, ray: &Segment) -> bool;
     fn overlaps(&self, other: &impl Shape) -> bool {
-        super::sat::overlaps(self, other)
+        super::sat::separating_axis_test(self.points(), other.points())
     }
     fn extents(&self) -> AABB;
     fn area(&self) -> f32;

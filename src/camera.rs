@@ -5,7 +5,7 @@ use maths::linear::Vec2f;
 #[derive(Clone, Debug)]
 pub struct Camera {
     pub position: Vec2f,
-    pub height_offset: f32,
+    pub z: f32,
     pub direction: Vec2f,
 
     pub yaw: f32,
@@ -16,7 +16,7 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new(position: Vec2f, height_offset: f32) -> Self {
+    pub fn new(position: Vec2f, z: f32) -> Self {
         let direction = Vec2f::new(0.0, 1.0);
         let yaw = 0.0;
         let yaw_sin = 0.0;
@@ -26,7 +26,7 @@ impl Camera {
 
         Self {
             position,
-            height_offset,
+            z,
             direction,
 
             yaw,
@@ -37,14 +37,16 @@ impl Camera {
         }
     }
 
-    pub fn update(&mut self, pos_delta: Vec2f, rot_delta: Vec2f) {
-        self.position += pos_delta;
+    pub fn translate(&mut self, translation: Vec2f) {
+        self.position += translation;
+    }
 
-        self.yaw += rot_delta.x;
+    pub fn rotate(&mut self, rotation: Vec2f) {
+        self.yaw += rotation.x;
         (self.yaw_sin, self.yaw_cos) = self.yaw.sin_cos();
 
         // Clamps pitch to +-45 degrees
-        self.pitch = (self.pitch + rot_delta.y).clamp(-FRAC_PI_4, FRAC_PI_4);
+        self.pitch = (self.pitch + rotation.y).clamp(-FRAC_PI_4, FRAC_PI_4);
         self.pitch_tan = self.pitch.tan();
 
         self.direction = Vec2f::new(self.yaw_sin, self.yaw_cos);

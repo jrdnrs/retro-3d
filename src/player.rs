@@ -1,6 +1,8 @@
 use input::Input;
-use maths::{geometry::AABB, linear::Vec2f};
-use physics::collider::Collider;
+use maths::{
+    geometry::{Circle, Shape},
+    linear::Vec2f,
+};
 use window::event::KeyCode;
 
 use crate::camera::Camera;
@@ -9,35 +11,41 @@ const MOUSE_SENSITIVITY: Vec2f = Vec2f { x: 0.1, y: 0.05 };
 
 pub struct Player {
     pub camera: Camera,
-    pub collider: Collider,
-    pub bounds: AABB,
     pub sector_index: usize,
-
+    pub collider: Circle,
+    pub prev_position: Vec2f,
     pub velocity: Vec2f,
 
-    pub prev_position: Vec2f,
+    pub crouch: bool,
+    pub head_z: f32,
+    pub knee_z: f32,
 }
 
 impl Player {
-    pub fn new(position: Vec2f, height_offset: f32, collider: Collider) -> Self {
-        let camera = Camera::new(position, height_offset);
-        let bounds = collider.extents();
+    pub fn new(position: Vec2f, z: f32, sector_index: usize) -> Self {
+        let camera = Camera::new(position, z);
+        let collider = Circle::new(position, 10.0);
+
+        let height = 15.0;
+        let head_z = z + height * 0.2;
+        let knee_z = z - height * 0.6;
 
         Self {
             camera,
+            sector_index,
             collider,
-            bounds,
-            sector_index: 0,
-
+            prev_position: position,
             velocity: Vec2f::ZERO,
 
-            prev_position: position,
+            crouch: false,
+            head_z,
+            knee_z,
         }
     }
 
-    pub fn update(&mut self, delta_seconds: f32, input: &Input) {
+    pub fn update_movement(&mut self, delta_seconds: f32, input: &Input) {
         let friction_mag = 175.0;
-        let impulse_mag = 250.0;
+        let impulse_mag = 300.0;
         let max_speed = 50.0;
 
         let mut mouse_delta = Vec2f::ZERO;
@@ -63,12 +71,10 @@ impl Player {
             // apply acceleration
             self.velocity += impulse * delta_seconds;
 
-            mouse_delta = input.mouse.get_delta();
+            mouse_delta = input.mouse.delta();
             // Negate y-axis to make up positive, as the y-axis is flipped in screen space
             mouse_delta.y = -mouse_delta.y;
         }
-
-        let rot_delta = mouse_delta * MOUSE_SENSITIVITY * delta_seconds;
 
         // Apply friction
         let friction_impulse = -(self.velocity / self.velocity.magnitude().max(1.0)) * friction_mag;
@@ -86,10 +92,33 @@ impl Player {
             self.velocity = Vec2f::ZERO;
         }
 
-        let pos_delta = self.velocity * delta_seconds;
-        self.prev_position = self.camera.position;
+        let translation = self.velocity * delta_seconds;
+        let rotation = mouse_delta * MOUSE_SENSITIVITY * delta_seconds;
 
-        self.collider.translate(pos_delta);
-        self.camera.update(pos_delta, rot_delta);
+        self.rotate(rotation);
+        self.translate(translation);
+
+        if input.keyboard.is_key_pressed(KeyCode::ShiftLeft) {
+            self.toggle_crouch();
+        }
+    }
+
+    pub fn toggle_crouch(&mut self) {
+        self.crouch = !self.crouch;
+
+        if self.crouch {
+            
+        } else {
+        }
+    }
+
+    pub fn translate(&mut self, translation: Vec2f) {
+        self.prev_position = self.camera.position;
+        self.collider.translate(translation);
+        self.camera.translate(translation);
+    }
+
+    pub fn rotate(&mut self, rotation: Vec2f) {
+        self.camera.rotate(rotation);
     }
 }

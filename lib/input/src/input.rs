@@ -5,6 +5,7 @@ use window::event::{Event, KeyCode, KeyboardEvent, MouseButton, PointerEvent};
 pub struct State {
     pressed: bool,
     held: bool,
+    released: bool,
 }
 
 pub struct Mouse {
@@ -41,6 +42,10 @@ impl Mouse {
         self.button_states[button as usize].held
     }
 
+    pub fn is_button_released(&self, button: MouseButton) -> bool {
+        self.button_states[button as usize].released
+    }
+
     pub fn is_moved(&self) -> bool {
         self.moved
     }
@@ -53,11 +58,11 @@ impl Mouse {
         self.on_window
     }
 
-    pub fn get_position(&self) -> Vec2f {
+    pub fn position(&self) -> Vec2f {
         Vec2f::new(self.pos_x as f32, self.pos_y as f32)
     }
 
-    pub fn get_delta(&self) -> Vec2f {
+    pub fn delta(&self) -> Vec2f {
         Vec2f::new(self.delta_x as f32, self.delta_y as f32)
     }
 
@@ -77,6 +82,7 @@ impl Mouse {
 
             PointerEvent::MouseButtonReleased(button) => {
                 self.button_states[*button as usize].held = false;
+                self.button_states[*button as usize].released = true;
             }
 
             PointerEvent::MouseEntered => {
@@ -92,6 +98,7 @@ impl Mouse {
     fn update(&mut self) {
         for state in self.button_states.iter_mut() {
             state.pressed = false;
+            state.released = false;
         }
 
         self.moved = false;
@@ -120,6 +127,10 @@ impl Keyboard {
         self.key_states[keycode as usize].held
     }
 
+    pub fn is_key_released(&self, keycode: KeyCode) -> bool {
+        self.key_states[keycode as usize].released
+    }
+
     fn handle_keyboard_event(&mut self, event: &KeyboardEvent) {
         match event {
             KeyboardEvent::KeyPressed(keycode) => {
@@ -130,6 +141,7 @@ impl Keyboard {
 
             KeyboardEvent::KeyReleased(keycode) => {
                 self.key_states[*keycode as usize].held = false;
+                self.key_states[*keycode as usize].released = true;
             }
         }
     }
@@ -137,6 +149,7 @@ impl Keyboard {
     fn update(&mut self) {
         for state in self.key_states.iter_mut() {
             state.pressed = false;
+            state.released = false;
         }
     }
 }

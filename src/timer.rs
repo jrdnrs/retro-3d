@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::app::FPS;
+use crate::consts::FPS;
 
 #[derive(Debug)]
 pub struct Timer {

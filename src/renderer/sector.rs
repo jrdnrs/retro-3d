@@ -1,4 +1,4 @@
-use crate::{surface::Sector, textures::Textures};
+use crate::{surface::Sector, textures::Texture};
 
 use super::{plane::PlaneRenderer, portal::PortalTree, wall::WallRenderer, RendererState};
 
@@ -30,7 +30,7 @@ impl SectorRenderer {
         state: &mut RendererState,
         portals: &mut PortalTree,
         sectors: &[Sector],
-        textures: &Textures,
+        textures: &[Texture],
         portal_index: usize,
     ) {
         let sector_index = portals.nodes[portal_index].sector_index;
@@ -48,8 +48,8 @@ impl SectorRenderer {
 
         let (min_wall_bounds, max_wall_bounds) = self.wall_renderer.get_wall_bounds();
 
-        let vs_ceiling_height = state.camera.height_offset - sector.ceiling.height;
-        let vs_floor_height = state.camera.height_offset - sector.floor.height;
+        let vs_ceiling_height = state.camera.z - sector.ceiling.height;
+        let vs_floor_height = state.camera.z - sector.floor.height;
 
         // Draw sector ceiling
         self.plane_renderer.draw_plane(

@@ -1,9 +1,9 @@
 use maths::linear::{Mat2f, Vec2f};
 
 use crate::{
-    app::{FAR, NEAR},
+    consts::{FAR, MIP_SCALES, NEAR},
     renderer::util::{diminish_lighting, mip_level, normalise_depth},
-    textures::{Texture, MIP_SCALES},
+    textures::Texture,
 };
 
 use super::{portal::PortalNode, RendererState};
@@ -156,7 +156,7 @@ impl PlaneRenderer {
         let focal_height_ratio = self.focal_height_ratios[y];
         let depth = focal_height_ratio * height_offset;
 
-        // When at the horizon, depth tends towards infinity, so skip drawing if so
+        // When at the horizon, depth tends towards infinity, so skip drawing if out of bounds.
         if depth < NEAR || depth > FAR {
             return;
         }
@@ -166,7 +166,7 @@ impl PlaneRenderer {
         let mip_scale = MIP_SCALES[mip_level];
 
         let lighting =
-            unsafe { (diminish_lighting(normal_depth) * 255.0).to_int_unchecked::<u16>() };
+            unsafe { (diminish_lighting(normal_depth) * 255.0).to_int_unchecked::<u8>() };
 
         // Calculate world space coordinates of either end of the span, via reversing the perspective
         // projection, and use these as the texture coordinates.
@@ -211,7 +211,7 @@ impl PlaneRenderer {
             let colour = unsafe {
                 texture
                     .sample_unchecked(texture_x, texture_y, mip_level)
-                    .lightness(lighting)
+                    .darken(lighting)
             };
             unsafe { state.framebuffer.set_pixel_unchecked(x, y, colour) };
 

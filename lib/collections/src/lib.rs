@@ -1,1 +1,3 @@
-pub mod fixed_vec;
+mod fixed_vec;
+
+pub use fixed_vec::FixedVec;

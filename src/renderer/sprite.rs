@@ -1,9 +1,6 @@
 use maths::{geometry::Segment, linear::Vec2f};
 
-use crate::{
-    surface::Sprite,
-    textures::{Texture, MIP_SCALES},
-};
+use crate::{consts::MIP_SCALES, surface::Sprite, textures::Texture};
 
 use super::{
     portal::PortalTree,
@@ -69,12 +66,12 @@ impl SpriteRenderer {
             return;
         }
 
-        // Clamp coordinates to screen space bounds
-        let x_min = (top_left.0.x as usize).clamp(0, state.framebuffer.width());
-        let x_max = (bottom_right.0.x as usize).clamp(0, state.framebuffer.width());
+        // Clamp sprite coordinates to screen space bounds
+        let sprite_x_min = (top_left.0.x as usize).clamp(0, state.framebuffer.width());
+        let sprite_x_max = (bottom_right.0.x as usize).clamp(0, state.framebuffer.width());
 
-        let mut portal_x_min = state.framebuffer.width();
-        let mut portal_x_max = 0;
+        let mut portals_x_min = state.framebuffer.width();
+        let mut portals_x_max = 0;
 
         for portal in portals.nodes.iter() {
             if portal.depth_min > dist_sq || portal.depth_max <= dist_sq {
@@ -83,20 +80,25 @@ impl SpriteRenderer {
 
             let portal_bounds = unsafe { portals.get_bounds_unchecked(portal.tree_depth) };
 
-            let overlap_x_min = x_min.max(portal.x_min as usize);
-            let overlap_x_max = x_max.min(portal.x_max as usize);
+            // X bounds overlap between the sprite and this portal
+            let overlap_x_min = sprite_x_min.max(portal.x_min as usize);
+            let overlap_x_max = sprite_x_max.min(portal.x_max as usize);
 
-            portal_x_min = portal_x_min.min(overlap_x_min);
-            portal_x_max = portal_x_max.max(overlap_x_max);
-
+            // Update the Y clip bounds for the overlapping X range
             for x in overlap_x_min..overlap_x_max {
                 self.clip_min[x] = portal_bounds.0[x];
                 self.clip_max[x] = portal_bounds.1[x];
             }
+
+            // Update the collated X bounds for all relevant portals
+            portals_x_min = portals_x_min.min(overlap_x_min);
+            portals_x_max = portals_x_max.max(overlap_x_max);
         }
 
-        let x_min = portal_x_min;
-        let x_max = portal_x_max;
+        // Update the X bounds for the sprite with the collated X bounds for all relevant portals as this
+        // is the viewable portion
+        let sprite_x_min = portals_x_min;
+        let sprite_x_max = portals_x_max;
 
         // TODO: Consider precalculating these values, but we must then make sure to update
         // texture coordinates when the sprite changes shape
@@ -112,10 +114,17 @@ impl SpriteRenderer {
             bottom_right.0,
             tex_coord_a,
             tex_coord_b,
-            x_min as f32,
+            sprite_x_min as f32,
         );
 
-        self.rasterise_sprite(state, sprite_lerp, texture, depth, x_min, x_max);
+        self.rasterise_sprite(
+            state,
+            sprite_lerp,
+            texture,
+            depth,
+            sprite_x_min,
+            sprite_x_max,
+        );
     }
 
     fn rasterise_sprite(
@@ -132,7 +141,7 @@ impl SpriteRenderer {
         let mip_scale = MIP_SCALES[mip_level];
 
         let lighting =
-            unsafe { (diminish_lighting(normal_depth) * 255.0).to_int_unchecked::<u16>() };
+            unsafe { (diminish_lighting(normal_depth) * 255.0).to_int_unchecked::<u8>() };
 
         // Draw sprite, one column at a time
         for x in x_min..x_max {
@@ -165,7 +174,7 @@ impl SpriteRenderer {
         texture: &Texture,
         mip_level: usize,
         mip_scale: f32,
-        lighting: u16,
+        lighting: u8,
         x: usize,
         y_min: usize,
         y_max: usize,
@@ -184,7 +193,7 @@ impl SpriteRenderer {
             let colour = unsafe {
                 texture
                     .sample_unchecked(texture_x, texture_y, mip_level)
-                    .lightness(lighting)
+                    .darken(lighting)
             };
 
             if colour.a != 0 {
