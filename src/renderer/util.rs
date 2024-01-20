@@ -41,5 +41,5 @@ pub fn view_frustum(h_fov: f32) -> Polygon {
 /// Returns a lighting scaling factor, between 0.33 and 1.0, based on the normalised depth.
 pub fn diminish_lighting(normal_depth: f32) -> f32 {
     let l = 1.0 - normal_depth;
-    (l * l).max(0.33)
+    ((l * l * l) * 1.5).min(1.0)
 }
