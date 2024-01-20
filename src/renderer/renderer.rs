@@ -1,3 +1,5 @@
+use std::f32::consts::PI;
+
 use maths::{geometry::Polygon, linear::Vec2f};
 
 use crate::{
@@ -8,6 +10,7 @@ use crate::{
     player::Player,
     surface::{Sector, Sprite},
     textures::Texture,
+    timer::Timer,
 };
 
 use super::{
@@ -117,9 +120,18 @@ impl RendererState {
         // at the start of `update`.
     }
 
-    fn update(&mut self, player: &Player) {
+    fn update(&mut self, timer: &Timer, player: &Player) {
         // Use player camera
         self.camera = player.camera.clone();
+
+        let amplitude = player.velocity.magnitude_sq() / (50.0 * 50.0);
+        let speed = timer.start.elapsed().as_secs_f32() * 5.0;
+
+        // View bobbing
+        let bob_yaw = speed.sin() * amplitude * 0.03;
+        let bob_pitch = (speed * 2.0).sin() * amplitude * 0.0075;
+
+        self.camera.rotate(Vec2f::new(bob_yaw, bob_pitch));
 
         self.pitch_shear = self.camera.pitch_tan * self.focal_height;
     }
@@ -240,12 +252,13 @@ impl Renderer {
 
     pub fn update(
         &mut self,
+        timer: &Timer,
         player: &Player,
         textures: &[Texture],
         sectors: &[Sector],
         sprites: &[Sprite],
     ) {
-        self.state.update(player);
+        self.state.update(timer, player);
 
         self.portal_tree.reset();
         self.sector_renderer.update(&self.state);
