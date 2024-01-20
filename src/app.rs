@@ -88,7 +88,7 @@ impl App {
                 .push(Font::from_path_png(path, size.0, size.1, 1).unwrap());
         }
 
-        // Enable debug drawing
+        // Enable debug drawing by default
         self.renderer.state_mut().debug = true;
 
         // Place player in sector 0
@@ -109,13 +109,13 @@ impl App {
                 id: 0,
                 walls: vec![
                     Wall::new(
-                        Vec2f::new(80.0, 200.0),
-                        Vec2f::new(130.0, 200.0),
+                        Vec2f::new(80.0, 600.0),
+                        Vec2f::new(130.0, 600.0),
                         stone_brick_wall,
                         None,
                     ),
                     Wall::new(
-                        Vec2f::new(130.0, 200.0),
+                        Vec2f::new(130.0, 600.0),
                         Vec2f::new(130.0, 140.0),
                         stone_brick_wall,
                         None,
@@ -134,7 +134,7 @@ impl App {
                     ),
                     Wall::new(
                         Vec2f::new(80.0, 160.0),
-                        Vec2f::new(80.0, 200.0),
+                        Vec2f::new(80.0, 600.0),
                         stone_brick_wall,
                         None,
                     ),
@@ -226,7 +226,7 @@ impl App {
                     ),
                 ],
                 floor: Plane::new(0.0, grass_floor),
-                ceiling: Plane::new(20.0, wood_ceiling),
+                ceiling: Plane::new(30.0, wood_ceiling),
             },
             Sector {
                 id: 3,
@@ -256,7 +256,7 @@ impl App {
                         None,
                     ),
                 ],
-                floor: Plane::new(5.0, grass_floor),
+                floor: Plane::new(2.0, grass_floor),
                 ceiling: Plane::new(25.0, wood_ceiling),
             },
             Sector {
@@ -301,22 +301,18 @@ impl App {
         self.sprites = vec![
             Sprite::new(
                 Vec2f::new(140.0, 80.0),
+                2,
                 WallTexture::new(GOBLIN, Vec2f::ZERO, Vec2f::uniform(8.0)),
                 15.0,
                 15.0,
             ),
             Sprite::new(
                 Vec2f::new(80.0, 80.0),
+                2,
                 WallTexture::new(GOBLIN, Vec2f::ZERO, Vec2f::uniform(8.0)),
                 15.0,
                 15.0,
             ),
-            // Sprite::new(
-            //     Vec2f::new(124.0, 143.0),
-            //     WallTexture::new(PORTAL, Vec2f::ZERO, Vec2f::uniform(5.0)),
-            //     20.0,
-            //     15.0,
-            // ),
         ];
     }
 
@@ -458,34 +454,41 @@ impl App {
                 * Mat2f::scale(Vec2f::uniform(5.0));
         }
 
-        self.renderer
-            .update(&self.player, &self.textures, &self.sectors, &self.sprites);
+        self.renderer.update(
+            &self.timer,
+            &self.player,
+            &self.textures,
+            &self.sectors,
+            &self.sprites,
+        );
         self.input.update();
 
         // Draw debug text
-        self.renderer.draw_text(
-            &self.fonts[0],
-            BGRA8::ORANGE,
-            (AlignWidth::Left, AlignHeight::Top),
-            0.01,
-            0.01,
-            &format!(
-                "Sector:   {:>3}
+        if self.renderer.state().debug {
+            self.renderer.draw_text(
+                &self.fonts[0],
+                BGRA8::ORANGE,
+                (AlignWidth::Left, AlignHeight::Top),
+                0.01,
+                0.01,
+                &format!(
+                    "Sector:   {:>3}
 Position: {:>6.2} {:>6.2} {:>6.2}
 Rotation: {:>6.2} {:>6.2}
 Velocity: {:>6.2} {:>6.2}
 Speed:    {:>6.2}",
-                self.player.sector_index,
-                self.player.camera.position.x,
-                self.player.camera.position.y,
-                self.player.camera.z,
-                self.player.camera.yaw,
-                self.player.camera.pitch,
-                self.player.velocity.x,
-                self.player.velocity.y,
-                self.player.velocity.magnitude()
-            ),
-        );
+                    self.player.sector_index,
+                    self.player.camera.position.x,
+                    self.player.camera.position.y,
+                    self.player.camera.z,
+                    self.player.camera.yaw,
+                    self.player.camera.pitch,
+                    self.player.velocity.x,
+                    self.player.velocity.y,
+                    self.player.velocity.magnitude()
+                ),
+            );
+        }
     }
 
     pub fn run(mut self) -> ! {

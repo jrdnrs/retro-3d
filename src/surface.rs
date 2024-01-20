@@ -1,4 +1,7 @@
-use maths::{linear::{Mat2f, Vec2f}, geometry::Segment};
+use maths::{
+    geometry::Segment,
+    linear::{Mat2f, Vec2f},
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct WallTexture {
@@ -95,19 +98,26 @@ impl Plane {
     }
 }
 
-
 #[derive(Debug)]
 pub struct Sprite {
     pub position: Vec2f,
+    pub sector_index: usize,
     pub texture_data: WallTexture,
     pub width: f32,
     pub height: f32,
 }
 
 impl Sprite {
-    pub fn new(position: Vec2f, texture_data: WallTexture, width: f32, height: f32) -> Self {
+    pub fn new(
+        position: Vec2f,
+        sector_index: usize,
+        texture_data: WallTexture,
+        width: f32,
+        height: f32,
+    ) -> Self {
         Self {
             position,
+            sector_index,
             texture_data,
             width,
             height,

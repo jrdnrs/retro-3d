@@ -39,7 +39,6 @@ impl SpriteRenderer {
         let vs = state.transform_view(sprite.position);
 
         let depth = vs.y;
-        let dist_sq = vs.magnitude_sq();
 
         // Reconstruct view space based on single transformed point, so that it always faces the camera
         let vs_a = vs - Vec2f::new(sprite.width * 0.5, 0.0);
@@ -56,13 +55,9 @@ impl SpriteRenderer {
         let top_left = state.project_screen_space(vs_a, sprite.height);
         let bottom_right = state.project_screen_space(vs_b, 0.0);
 
-        // TODO: If we keep the frustum culling, checking the X axis here is redundant
         // Early out if outside of screen space
-        if bottom_right.0.x < 0.0
-            || top_left.0.x > state.framebuffer.width() as f32
-            || bottom_right.0.y < 0.0
-            || top_left.0.y > state.framebuffer.height() as f32
-        {
+        // We only check Y here, as frustum culling should have already taken care of X
+        if bottom_right.0.y < 0.0 || top_left.0.y > state.framebuffer.height() as f32 {
             return;
         }
 
@@ -74,7 +69,7 @@ impl SpriteRenderer {
         let mut portals_x_max = 0;
 
         for portal in portals.nodes.iter() {
-            if portal.depth_min > dist_sq || portal.depth_max <= dist_sq {
+            if portal.sector_index != sprite.sector_index {
                 continue;
             }
 
@@ -84,7 +79,7 @@ impl SpriteRenderer {
             let overlap_x_min = sprite_x_min.max(portal.x_min as usize);
             let overlap_x_max = sprite_x_max.min(portal.x_max as usize);
 
-            // Update the Y clip bounds for the overlapping X range
+            // Update the sprite's Y clip bounds for the overlapping X range
             for x in overlap_x_min..overlap_x_max {
                 self.clip_min[x] = portal_bounds.0[x];
                 self.clip_max[x] = portal_bounds.1[x];
@@ -99,6 +94,11 @@ impl SpriteRenderer {
         // is the viewable portion
         let sprite_x_min = portals_x_min;
         let sprite_x_max = portals_x_max;
+
+        // Early out if the sprite is completely obscured
+        if sprite_x_min >= sprite_x_max {
+            return;
+        }
 
         // TODO: Consider precalculating these values, but we must then make sure to update
         // texture coordinates when the sprite changes shape
